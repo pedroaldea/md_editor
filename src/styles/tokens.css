@@ -1,0 +1,30 @@
+:root {
+  --font-sans: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Menlo", monospace;
+
+  --bg-app: radial-gradient(circle at top left, #f2f6ff 0%, #f8f5f0 45%, #f3f6f3 100%);
+  --bg-panel: rgba(255, 255, 255, 0.8);
+  --bg-panel-strong: rgba(255, 255, 255, 0.95);
+  --text-primary: #1e2430;
+  --text-subtle: #5c6678;
+  --border-soft: rgba(33, 47, 77, 0.14);
+  --accent: #0a7f5a;
+  --accent-soft: rgba(10, 127, 90, 0.16);
+  --error: #bf3535;
+  --shadow-soft: 0 12px 30px rgba(17, 24, 39, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-app: radial-gradient(circle at top left, #202832 0%, #171d25 44%, #12181e 100%);
+    --bg-panel: rgba(23, 29, 37, 0.8);
+    --bg-panel-strong: rgba(25, 32, 41, 0.94);
+    --text-primary: #e6ecf5;
+    --text-subtle: #aeb8cb;
+    --border-soft: rgba(143, 163, 205, 0.24);
+    --accent: #58d7ac;
+    --accent-soft: rgba(88, 215, 172, 0.18);
+    --error: #ff7f7f;
+    --shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.35);
+  }
+}
