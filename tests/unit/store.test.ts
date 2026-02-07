@@ -50,4 +50,20 @@ describe("document store", () => {
     expect(state.document.recovered).toBe(true);
     expect(state.document.dirty).toBe(true);
   });
+
+  it("updates reader palette and ultra read settings", () => {
+    const store = useDocumentStore.getState();
+    store.setReaderPalette("paper");
+    store.setUltraReadEnabled(true);
+    store.setUltraReadFixation(0.6);
+    store.setUltraReadMinWordLength(5);
+    store.setUltraReadFocusWeight(840);
+
+    const state = useDocumentStore.getState();
+    expect(state.readerPalette).toBe("paper");
+    expect(state.ultraRead.enabled).toBe(true);
+    expect(state.ultraRead.fixation).toBe(0.6);
+    expect(state.ultraRead.minWordLength).toBe(5);
+    expect(state.ultraRead.focusWeight).toBe(840);
+  });
 });

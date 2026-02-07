@@ -1,4 +1,12 @@
 export type ThemeMode = "system" | "light" | "dark";
+export type ReaderPalette = "void" | "paper" | "mist";
+
+export interface UltraReadConfig {
+  enabled: boolean;
+  fixation: number;
+  minWordLength: number;
+  focusWeight: number;
+}
 
 export type AppErrorCode =
   | "FILE_NOT_FOUND"
@@ -31,4 +39,10 @@ export interface SaveResult {
   path: string;
   mtimeMs: number;
   savedAtMs: number;
+}
+
+export interface MarkdownFileEntry {
+  path: string;
+  name: string;
+  relativePath: string;
 }

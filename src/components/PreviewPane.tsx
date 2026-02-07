@@ -7,6 +7,7 @@ interface PreviewPaneProps {
   targetScrollRatio: number | null;
   onScrollRatioChange: (ratio: number) => void;
   onExternalLink: (href: string) => void;
+  ultraReadEnabled: boolean;
 }
 
 export default function PreviewPane({
@@ -14,7 +15,8 @@ export default function PreviewPane({
   activeBlockIndex,
   targetScrollRatio,
   onScrollRatioChange,
-  onExternalLink
+  onExternalLink,
+  ultraReadEnabled
 }: PreviewPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const applyingExternalScrollRef = useRef(false);
@@ -93,7 +95,7 @@ export default function PreviewPane({
 
   return (
     <div
-      className="preview-pane"
+      className={`preview-pane${ultraReadEnabled ? " ultra-read" : ""}`}
       ref={containerRef}
       onClick={handleClick}
       dangerouslySetInnerHTML={{ __html: html }}

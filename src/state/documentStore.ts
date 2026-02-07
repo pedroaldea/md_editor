@@ -3,13 +3,15 @@ import type {
   AppError,
   DocumentState,
   OpenDocumentResult,
+  ReaderPalette,
   SaveResult,
-  ThemeMode
+  UltraReadConfig
 } from "../types/app";
 
 interface DocumentStore {
   document: DocumentState;
-  themeMode: ThemeMode;
+  readerPalette: ReaderPalette;
+  ultraRead: UltraReadConfig;
   status: string;
   error: AppError | null;
   setContent: (content: string) => void;
@@ -17,7 +19,11 @@ interface DocumentStore {
   markSaved: (result: SaveResult) => void;
   markRecovered: (content: string) => void;
   newDocument: () => void;
-  setThemeMode: (mode: ThemeMode) => void;
+  setReaderPalette: (palette: ReaderPalette) => void;
+  setUltraReadEnabled: (enabled: boolean) => void;
+  setUltraReadFixation: (fixation: number) => void;
+  setUltraReadMinWordLength: (minWordLength: number) => void;
+  setUltraReadFocusWeight: (focusWeight: number) => void;
   setStatus: (status: string) => void;
   setError: (error: AppError | null) => void;
   reset: () => void;
@@ -34,7 +40,13 @@ const createInitialDocument = (): DocumentState => ({
 
 const initialState = {
   document: createInitialDocument(),
-  themeMode: "system" as ThemeMode,
+  readerPalette: "void" as ReaderPalette,
+  ultraRead: {
+    enabled: false,
+    fixation: 0.45,
+    minWordLength: 4,
+    focusWeight: 760
+  } as UltraReadConfig,
   status: "Ready",
   error: null as AppError | null
 };
@@ -95,10 +107,38 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
       document: createInitialDocument(),
       error: null
     }),
-  setThemeMode: (mode: ThemeMode) =>
+  setReaderPalette: (palette: ReaderPalette) =>
     set({
-      themeMode: mode
+      readerPalette: palette
     }),
+  setUltraReadEnabled: (enabled: boolean) =>
+    set((state) => ({
+      ultraRead: {
+        ...state.ultraRead,
+        enabled
+      }
+    })),
+  setUltraReadFixation: (fixation: number) =>
+    set((state) => ({
+      ultraRead: {
+        ...state.ultraRead,
+        fixation
+      }
+    })),
+  setUltraReadMinWordLength: (minWordLength: number) =>
+    set((state) => ({
+      ultraRead: {
+        ...state.ultraRead,
+        minWordLength
+      }
+    })),
+  setUltraReadFocusWeight: (focusWeight: number) =>
+    set((state) => ({
+      ultraRead: {
+        ...state.ultraRead,
+        focusWeight
+      }
+    })),
   setStatus: (status: string) =>
     set({
       status
