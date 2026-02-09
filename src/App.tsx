@@ -94,6 +94,7 @@ export default function App() {
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [isResizing, setIsResizing] = useState(false);
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 900px)").matches);
+  const [readMode, setReadMode] = useState(false);
 
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<MarkdownFileEntry[]>([]);
@@ -333,6 +334,27 @@ export default function App() {
       return window.confirm(`Discard unsaved draft and continue ${actionDescription}?`);
     },
     [saveDocument]
+  );
+
+  const handleOpenAssociatedPath = useCallback(
+    async (path: string) => {
+      if (!path) {
+        return;
+      }
+
+      const currentPath = useDocumentStore.getState().document.path;
+      if (currentPath === path) {
+        return;
+      }
+
+      const canContinue = await ensureCanReplaceDocument("opening a file");
+      if (!canContinue) {
+        return;
+      }
+
+      await openDocumentAtPath(path);
+    },
+    [ensureCanReplaceDocument, openDocumentAtPath]
   );
 
   const openFromDialog = useCallback(async () => {
@@ -688,14 +710,38 @@ export default function App() {
     };
   }, [createNewDocument, exportLogs, openFromDialog, saveDocument]);
 
+  useEffect(() => {
+    const disposers: Array<() => void> = [];
+
+    void listen<string>("app://open-path", (event) => {
+      void handleOpenAssociatedPath(event.payload);
+    }).then((dispose) => {
+      disposers.push(dispose);
+    });
+
+    void invoke<string | null>("take_pending_open_path")
+      .then((path) => {
+        if (path) {
+          void handleOpenAssociatedPath(path);
+        }
+      })
+      .catch(() => {
+        // no-op: app can still be used normally without a launch path
+      });
+
+    return () => {
+      disposers.forEach((dispose) => dispose());
+    };
+  }, [handleOpenAssociatedPath]);
+
   const layoutStyle = useMemo(() => {
-    if (isNarrow) {
+    if (isNarrow || readMode) {
       return undefined;
     }
     return {
       gridTemplateColumns: `${splitRatio}fr 8px ${1 - splitRatio}fr`
     };
-  }, [isNarrow, splitRatio]);
+  }, [isNarrow, readMode, splitRatio]);
 
   const showSidebar = workspaceFolder !== null || workspaceLoading;
 
@@ -708,6 +754,7 @@ export default function App() {
         error={error}
         readerPalette={readerPalette}
         ultraRead={ultraRead}
+        readMode={readMode}
         cosmicOpen={cosmicOpen}
         onNew={() => {
           void createNewDocument();
@@ -723,6 +770,9 @@ export default function App() {
         }}
         onSaveAs={() => {
           void saveDocument(true, "manual");
+        }}
+        onToggleReadMode={() => {
+          setReadMode((current) => !current);
         }}
         onToggleCosmic={toggleCosmic}
         onReaderPaletteChange={handleReaderPaletteChange}
@@ -753,23 +803,27 @@ export default function App() {
           />
         ) : null}
 
-        <main className="editor-layout" ref={layoutRef} style={layoutStyle}>
-          <section className="pane pane-editor">
-            <EditorPane
-              value={document.content}
-              targetScrollRatio={editorScrollTarget}
-              onChange={setContent}
-              onCursorLineChange={handleCursorLineChange}
-              onScrollRatioChange={handleEditorScroll}
+        <main className={`editor-layout${readMode ? " is-read-mode" : ""}`} ref={layoutRef} style={layoutStyle}>
+          {!readMode ? (
+            <section className="pane pane-editor">
+              <EditorPane
+                value={document.content}
+                targetScrollRatio={editorScrollTarget}
+                onChange={setContent}
+                onCursorLineChange={handleCursorLineChange}
+                onScrollRatioChange={handleEditorScroll}
+              />
+            </section>
+          ) : null}
+          {!readMode ? (
+            <div
+              className="pane-divider"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize panes"
+              onMouseDown={() => setIsResizing(true)}
             />
-          </section>
-          <div
-            className="pane-divider"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize panes"
-            onMouseDown={() => setIsResizing(true)}
-          />
+          ) : null}
           <section
             className="pane pane-preview"
             style={

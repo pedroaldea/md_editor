@@ -7,12 +7,14 @@ interface TopBarProps {
   error: AppError | null;
   readerPalette: ReaderPalette;
   ultraRead: UltraReadConfig;
+  readMode: boolean;
   cosmicOpen: boolean;
   onNew: () => void;
   onOpen: () => void;
   onOpenFolder: () => void;
   onSave: () => void;
   onSaveAs: () => void;
+  onToggleReadMode: () => void;
   onToggleCosmic: () => void;
   onReaderPaletteChange: (palette: ReaderPalette) => void;
   onUltraReadEnabledChange: (enabled: boolean) => void;
@@ -36,12 +38,14 @@ export default function TopBar({
   error,
   readerPalette,
   ultraRead,
+  readMode,
   cosmicOpen,
   onNew,
   onOpen,
   onOpenFolder,
   onSave,
   onSaveAs,
+  onToggleReadMode,
   onToggleCosmic,
   onReaderPaletteChange,
   onUltraReadEnabledChange,
@@ -90,6 +94,14 @@ export default function TopBar({
             <option value="mist">Mist</option>
           </select>
         </label>
+        <button
+          type="button"
+          className={readMode ? "is-active" : ""}
+          onClick={onToggleReadMode}
+          title="Toggle read mode"
+        >
+          Read
+        </button>
         <button
           type="button"
           className={ultraRead.enabled ? "is-active" : ""}
