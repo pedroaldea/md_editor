@@ -5,30 +5,48 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
+import CommandPalette from "./components/CommandPalette";
 import CosmicFocusOverlay from "./components/CosmicFocusOverlay";
 import EditorPane from "./components/EditorPane";
+import ExportModal from "./components/ExportModal";
 import FileSidebar from "./components/FileSidebar";
+import HistoryModal from "./components/HistoryModal";
+import LinkValidationModal from "./components/LinkValidationModal";
 import PreviewPane from "./components/PreviewPane";
 import TopBar from "./components/TopBar";
+import UserGuideModal from "./components/UserGuideModal";
+import { runPdfPrint } from "./lib/export";
 import {
   applyBionicReading,
+  extractHeadings,
   extractReadingWords,
   getBlockIndexForLine,
+  getChecklistProgress,
   renderBionicWord,
   renderMarkdown
 } from "./lib/markdown";
 import { bindShortcuts } from "./lib/shortcuts";
+import { formatMarkdownTables } from "./lib/tableFormatter";
 import { useDocumentStore } from "./state/documentStore";
 import type {
   AppError,
+  CommandPaletteItem,
+  ExportProfile,
+  LinkValidationIssue,
+  LinkValidationReport,
   MarkdownFileEntry,
   OpenDocumentResult,
   ReaderPalette,
-  SaveResult
+  SaveResult,
+  SavedImageAsset,
+  SearchHit,
+  SessionState,
+  SnapshotEntry
 } from "./types/app";
 
 const MARKDOWN_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }];
 const LOG_FILTER = [{ name: "Log", extensions: ["log", "txt"] }];
+const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
 
 const normalizeError = (value: unknown): AppError => {
   if (typeof value === "string") {
@@ -67,6 +85,68 @@ const hasUnsavedChanges = (): boolean => useDocumentStore.getState().document.di
 const isPathInsideFolder = (path: string, folderPath: string): boolean =>
   path === folderPath || path.startsWith(`${folderPath}/`);
 
+const isTextOpenablePath = (path: string): boolean => {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt");
+};
+
+const isImagePath = (path: string): boolean => {
+  const lower = path.toLowerCase();
+  return (
+    lower.endsWith(".png") ||
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".gif") ||
+    lower.endsWith(".webp") ||
+    lower.endsWith(".bmp") ||
+    lower.endsWith(".svg")
+  );
+};
+
+const buildHtmlExport = (title: string, bodyHtml: string): string => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 2rem;
+      font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
+      line-height: 1.7;
+      font-size: 16px;
+      background: #0f1115;
+      color: #e5ecf3;
+    }
+    main { max-width: 96ch; margin: 0 auto; }
+    code, pre { font-family: "JetBrains Mono", "SF Mono", monospace; }
+    pre {
+      background: #111723;
+      border-radius: 10px;
+      padding: 12px;
+      overflow: auto;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #2f3948;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    a { color: #66d9ff; }
+    img { max-width: 100%; height: auto; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main>${bodyHtml}</main>
+</body>
+</html>`;
+
 export default function App() {
   const {
     document,
@@ -76,6 +156,7 @@ export default function App() {
     ultraRead,
     setContent,
     loadDocument,
+    loadDocumentDirty,
     markSaved,
     markRecovered,
     newDocument,
@@ -87,18 +168,41 @@ export default function App() {
     setStatus,
     setError
   } = useDocumentStore();
+
   const [activeBlockIndex, setActiveBlockIndex] = useState(0);
   const [previewScrollTarget, setPreviewScrollTarget] = useState<number | null>(null);
   const [editorScrollTarget, setEditorScrollTarget] = useState<number | null>(null);
+  const [currentPreviewScrollRatio, setCurrentPreviewScrollRatio] = useState<number | null>(null);
+  const [currentEditorScrollRatio, setCurrentEditorScrollRatio] = useState<number | null>(null);
+  const [targetCursorLine, setTargetCursorLine] = useState<number | null>(null);
+  const [insertTextRequest, setInsertTextRequest] = useState<{ id: number; text: string } | null>(null);
+  const insertRequestIdRef = useRef(0);
+
   const [saving, setSaving] = useState(false);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [isResizing, setIsResizing] = useState(false);
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 900px)").matches);
   const [readMode, setReadMode] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusPreviewOnly, setFocusPreviewOnly] = useState(false);
 
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<MarkdownFileEntry[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [searchingWorkspace, setSearchingWorkspace] = useState(false);
+
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
+  const [userGuideOpen, setUserGuideOpen] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
+  const [validationIssues, setValidationIssues] = useState<LinkValidationIssue[]>([]);
+  const [validationCheckedExternal, setValidationCheckedExternal] = useState(false);
 
   const [cosmicOpen, setCosmicOpen] = useState(false);
   const [cosmicPlaying, setCosmicPlaying] = useState(false);
@@ -112,6 +216,10 @@ export default function App() {
   const [cosmicFixation, setCosmicFixation] = useState(0.45);
   const [cosmicMinWordLength, setCosmicMinWordLength] = useState(4);
 
+  const [associatedPathHandled, setAssociatedPathHandled] = useState(false);
+  const associatedPathOpenedRef = useRef(false);
+  const sessionHydratedRef = useRef(false);
+
   const layoutRef = useRef<HTMLElement | null>(null);
 
   const rendered = useMemo(() => renderMarkdown(document.content), [document.content]);
@@ -120,6 +228,18 @@ export default function App() {
     [rendered.html, ultraRead]
   );
   const cosmicWords = useMemo(() => extractReadingWords(document.content), [document.content]);
+  const headings = useMemo(() => extractHeadings(document.content), [document.content]);
+  const checklistProgress = useMemo(() => getChecklistProgress(document.content), [document.content]);
+
+  const checklistLabel =
+    checklistProgress.total > 0
+      ? `Tasks ${checklistProgress.completed}/${checklistProgress.total} (${checklistProgress.percent}%)`
+      : null;
+
+  const queueInsertText = useCallback((text: string) => {
+    insertRequestIdRef.current += 1;
+    setInsertTextRequest({ id: insertRequestIdRef.current, text });
+  }, []);
 
   const renderCosmicWord = useCallback(
     (word: string) => {
@@ -138,9 +258,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    setActiveBlockIndex((current) =>
-      Math.min(current, Math.max(0, rendered.blockCount - 1))
-    );
+    setActiveBlockIndex((current) => Math.min(current, Math.max(0, rendered.blockCount - 1)));
   }, [rendered.blockCount]);
 
   useEffect(() => {
@@ -202,13 +320,16 @@ export default function App() {
   }, [cosmicOpen, cosmicWords.length]);
 
   const openDocumentAtPath = useCallback(
-    async (path: string) => {
+    async (path: string, line?: number) => {
       try {
         const result = await invoke<OpenDocumentResult>("open_document", { path });
         loadDocument(result);
         await invoke("store_recovery_draft", { content: "" });
         setStatus(`Opened ${path.split("/").pop() ?? path}`);
         setError(null);
+        if (typeof line === "number" && Number.isFinite(line)) {
+          setTargetCursorLine(Math.max(1, Math.round(line)));
+        }
       } catch (unknownError) {
         const appError = normalizeError(unknownError);
         setStatus("Could not open file");
@@ -240,6 +361,42 @@ export default function App() {
     [setError, setStatus]
   );
 
+  const runWorkspaceSearch = useCallback(async () => {
+    if (!workspaceFolder || searchQuery.trim().length === 0) {
+      setSearchHits([]);
+      return;
+    }
+
+    setSearchingWorkspace(true);
+    try {
+      const hits = await invoke<SearchHit[]>("search_workspace", {
+        directory: workspaceFolder,
+        query: searchQuery,
+        limit: 200
+      });
+      setSearchHits(hits);
+    } catch (unknownError) {
+      const appError = normalizeError(unknownError);
+      setError(appError);
+      setStatus("Workspace search failed");
+    } finally {
+      setSearchingWorkspace(false);
+    }
+  }, [searchQuery, setError, setStatus, workspaceFolder]);
+
+  useEffect(() => {
+    if (!workspaceFolder || searchQuery.trim().length === 0) {
+      setSearchHits([]);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void runWorkspaceSearch();
+    }, 220);
+
+    return () => window.clearTimeout(timeout);
+  }, [runWorkspaceSearch, searchQuery, workspaceFolder]);
+
   const openFolderFromDialog = useCallback(async () => {
     const selected = await openDialog({
       multiple: false,
@@ -250,6 +407,7 @@ export default function App() {
       return;
     }
 
+    setSidebarCollapsed(false);
     await loadWorkspaceFolder(selected);
   }, [loadWorkspaceFolder]);
 
@@ -272,6 +430,15 @@ export default function App() {
           markSaved(result);
           setStatus(reason === "autosave" ? "Autosaved" : "Saved");
           setError(null);
+          try {
+            await invoke("create_snapshot", {
+              path: result.path,
+              content: snapshot.content,
+              reason
+            });
+          } catch {
+            // Keep save successful even if snapshot fails.
+          }
           return true;
         }
 
@@ -293,6 +460,15 @@ export default function App() {
         });
         markSaved(result);
         await invoke("store_recovery_draft", { content: "" });
+        try {
+          await invoke("create_snapshot", {
+            path: result.path,
+            content: snapshot.content,
+            reason: "manual"
+          });
+        } catch {
+          // Keep save successful even if snapshot fails.
+        }
         setStatus("Saved");
         setError(null);
         return true;
@@ -342,6 +518,7 @@ export default function App() {
         return;
       }
 
+      associatedPathOpenedRef.current = true;
       const currentPath = useDocumentStore.getState().document.path;
       if (currentPath === path) {
         return;
@@ -404,6 +581,23 @@ export default function App() {
     [ensureCanReplaceDocument, openDocumentAtPath]
   );
 
+  const handleSearchHitSelect = useCallback(
+    async (hit: SearchHit) => {
+      const currentPath = useDocumentStore.getState().document.path;
+      if (currentPath === hit.path) {
+        setTargetCursorLine(hit.line);
+        return;
+      }
+
+      const canContinue = await ensureCanReplaceDocument("opening search result");
+      if (!canContinue) {
+        return;
+      }
+      await openDocumentAtPath(hit.path, hit.line);
+    },
+    [ensureCanReplaceDocument, openDocumentAtPath]
+  );
+
   const handleCursorLineChange = useCallback(
     (lineNumber: number) => {
       setActiveBlockIndex(getBlockIndexForLine(document.content, lineNumber));
@@ -412,10 +606,12 @@ export default function App() {
   );
 
   const handleEditorScroll = useCallback((ratio: number) => {
+    setCurrentEditorScrollRatio(ratio);
     setPreviewScrollTarget(ratio);
   }, []);
 
   const handlePreviewScroll = useCallback((ratio: number) => {
+    setCurrentPreviewScrollRatio(ratio);
     setEditorScrollTarget(ratio);
   }, []);
 
@@ -426,6 +622,86 @@ export default function App() {
       window.open(href, "_blank", "noopener,noreferrer");
     }
   }, []);
+
+  const ensureDocumentPathForAssets = useCallback(async (): Promise<string | null> => {
+    const current = useDocumentStore.getState().document;
+    if (current.path) {
+      return current.path;
+    }
+
+    const saved = await saveDocument(true, "manual");
+    if (!saved) {
+      setStatus("Save document first to attach images");
+      return null;
+    }
+
+    return useDocumentStore.getState().document.path;
+  }, [saveDocument, setStatus]);
+
+  const handleClipboardImagePaste = useCallback(
+    async (payload: { fileName: string; mimeType: string; base64Data: string }): Promise<string | null> => {
+      const documentPath = await ensureDocumentPathForAssets();
+      if (!documentPath) {
+        return null;
+      }
+
+      try {
+        const asset = await invoke<SavedImageAsset>("save_image_asset", {
+          document_path: documentPath,
+          file_name: payload.fileName,
+          mime_type: payload.mimeType,
+          base64_data: payload.base64Data
+        });
+        setStatus(`Inserted ${asset.relativePath}`);
+
+        const alt = payload.fileName
+          .replace(/\.[^/.]+$/u, "")
+          .replace(/[_-]+/gu, " ")
+          .trim();
+        return `![${alt || "image"}](${asset.relativePath})`;
+      } catch (unknownError) {
+        const appError = normalizeError(unknownError);
+        setError(appError);
+        setStatus("Could not save pasted image");
+        return null;
+      }
+    },
+    [ensureDocumentPathForAssets, setError, setStatus]
+  );
+
+  const insertImageFromPath = useCallback(
+    async (sourcePath: string) => {
+      const documentPath = await ensureDocumentPathForAssets();
+      if (!documentPath) {
+        return;
+      }
+
+      const documentDir = documentPath.slice(0, Math.max(documentPath.lastIndexOf("/"), 0));
+      try {
+        let relativePath: string;
+
+        if (sourcePath.startsWith(`${documentDir}/`) || sourcePath === documentDir) {
+          relativePath = sourcePath.slice(documentDir.length + 1);
+        } else {
+          const imported = await invoke<SavedImageAsset>("import_image_asset", {
+            document_path: documentPath,
+            source_path: sourcePath
+          });
+          relativePath = imported.relativePath;
+        }
+
+        const fileName = sourcePath.split("/").pop() ?? "image";
+        const alt = fileName.replace(/\.[^/.]+$/u, "").replace(/[_-]+/gu, " ").trim();
+        queueInsertText(`![${alt || "image"}](${relativePath})`);
+        setStatus(`Inserted ${relativePath}`);
+      } catch (unknownError) {
+        const appError = normalizeError(unknownError);
+        setError(appError);
+        setStatus("Could not import dropped image");
+      }
+    },
+    [ensureDocumentPathForAssets, queueInsertText, setError, setStatus]
+  );
 
   const exportLogs = useCallback(async () => {
     const selected = await saveDialog({
@@ -526,6 +802,351 @@ export default function App() {
     setCosmicOpen(true);
   }, [cosmicOpen, cosmicWords.length, setStatus]);
 
+  const focusWorkspaceSearch = useCallback(() => {
+    const searchInput = window.document.querySelector<HTMLInputElement>(".sidebar-search-input");
+    if (!searchInput) {
+      return;
+    }
+    searchInput.focus();
+    searchInput.select();
+  }, []);
+
+  const runValidateLinks = useCallback(
+    async (checkExternal: boolean) => {
+      if (!document.path) {
+        setStatus("Open or save a document first");
+        return;
+      }
+
+      try {
+        const report = await invoke<LinkValidationReport>("validate_links", {
+          document_path: document.path,
+          markdown: document.content,
+          check_external: checkExternal
+        });
+
+        setValidationIssues(report.issues);
+        setValidationCheckedExternal(report.checkedExternal);
+        setValidationOpen(true);
+        setStatus(`Link validation finished (${report.issues.length} issue(s))`);
+      } catch (unknownError) {
+        const appError = normalizeError(unknownError);
+        setError(appError);
+        setStatus("Link validation failed");
+      }
+    },
+    [document.content, document.path, setError, setStatus]
+  );
+
+  const openHistoryModal = useCallback(async () => {
+    if (!document.path) {
+      setStatus("Open or save a document first");
+      return;
+    }
+
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const entries = await invoke<SnapshotEntry[]>("list_snapshots", {
+        path: document.path
+      });
+      setSnapshots(entries);
+    } catch (unknownError) {
+      const appError = normalizeError(unknownError);
+      setError(appError);
+      setStatus("Could not load history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [document.path, setError, setStatus]);
+
+  const restoreSnapshot = useCallback(
+    async (snapshotId: string) => {
+      if (!document.path) {
+        return;
+      }
+
+      try {
+        const restored = await invoke<OpenDocumentResult>("load_snapshot", {
+          path: document.path,
+          snapshot_id: snapshotId
+        });
+
+        loadDocumentDirty(restored);
+        setStatus("Snapshot restored as unsaved draft");
+        setHistoryOpen(false);
+      } catch (unknownError) {
+        const appError = normalizeError(unknownError);
+        setError(appError);
+        setStatus("Could not restore snapshot");
+      }
+    },
+    [document.path, loadDocumentDirty, setError, setStatus]
+  );
+
+  const handleExportSelect = useCallback(
+    async (profile: ExportProfile) => {
+      setExportOpen(false);
+
+      if (profile === "pdf-print") {
+        const opened = await runPdfPrint();
+        if (opened) {
+          setStatus("Opened print dialog. Choose Save as PDF.");
+          setError(null);
+        } else {
+          setStatus("Could not open the print dialog");
+          setError({
+            code: "IO",
+            message: "Printing is unavailable in this environment."
+          });
+        }
+        return;
+      }
+
+      const defaultBase = (document.path?.split("/").pop() ?? "Untitled").replace(/\.[^/.]+$/u, "");
+
+      if (profile === "clean-markdown") {
+        const selected = await saveDialog({
+          defaultPath: `${defaultBase}.md`,
+          filters: MARKDOWN_FILTER
+        });
+        if (!selected || Array.isArray(selected)) {
+          return;
+        }
+
+        try {
+          await invoke("write_text_file", {
+            path: selected,
+            content: document.content
+          });
+          setStatus("Exported Markdown");
+        } catch (unknownError) {
+          const appError = normalizeError(unknownError);
+          setError(appError);
+          setStatus("Could not export Markdown");
+        }
+        return;
+      }
+
+      if (profile === "html") {
+        const selected = await saveDialog({
+          defaultPath: `${defaultBase}.html`,
+          filters: HTML_FILTER
+        });
+        if (!selected || Array.isArray(selected)) {
+          return;
+        }
+
+        try {
+          const html = buildHtmlExport(defaultBase, rendered.html);
+          await invoke("write_text_file", {
+            path: selected,
+            content: html
+          });
+          setStatus("Exported HTML");
+        } catch (unknownError) {
+          const appError = normalizeError(unknownError);
+          setError(appError);
+          setStatus("Could not export HTML");
+        }
+      }
+    },
+    [document.content, document.path, rendered.html, setError, setStatus]
+  );
+
+  const formatTables = useCallback(() => {
+    const formatted = formatMarkdownTables(document.content);
+    if (formatted === document.content) {
+      setStatus("No table changes needed");
+      return;
+    }
+    setContent(formatted);
+    setStatus("Tables formatted");
+  }, [document.content, setContent, setStatus]);
+
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const actions: CommandPaletteItem[] = [
+      {
+        id: "action:new",
+        type: "action",
+        title: "New document",
+        subtitle: "Create an empty markdown document",
+        keywords: ["new", "file", "document"],
+        run: async () => createNewDocument()
+      },
+      {
+        id: "action:open",
+        type: "action",
+        title: "Open file",
+        subtitle: "Choose a markdown file",
+        keywords: ["open", "file"],
+        run: async () => openFromDialog()
+      },
+      {
+        id: "action:open-folder",
+        type: "action",
+        title: "Open folder",
+        subtitle: "Load markdown workspace",
+        keywords: ["folder", "workspace"],
+        run: async () => openFolderFromDialog()
+      },
+      {
+        id: "action:save",
+        type: "action",
+        title: "Save",
+        subtitle: "Save current file",
+        keywords: ["save"],
+        run: async () => {
+          await saveDocument(false, "manual");
+        }
+      },
+      {
+        id: "action:save-as",
+        type: "action",
+        title: "Save As",
+        subtitle: "Save current file with a new name",
+        keywords: ["save", "as"],
+        run: async () => {
+          await saveDocument(true, "manual");
+        }
+      },
+      {
+        id: "action:read",
+        type: "action",
+        title: readMode ? "Disable read mode" : "Enable read mode",
+        keywords: ["read", "preview", "mode"],
+        run: () => {
+          setReadMode((current) => {
+            const next = !current;
+            if (next) {
+              setFocusMode(false);
+              setFocusPreviewOnly(false);
+            }
+            return next;
+          });
+        }
+      },
+      {
+        id: "action:focus",
+        type: "action",
+        title: focusMode ? "Disable focus mode" : "Enable focus mode",
+        keywords: ["focus", "writer", "mode"],
+        run: () => {
+          setFocusMode((current) => {
+            const next = !current;
+            if (next) {
+              setReadMode(false);
+              setFocusPreviewOnly(false);
+            }
+            return next;
+          });
+        }
+      },
+      {
+        id: "action:export",
+        type: "action",
+        title: "Open export options",
+        keywords: ["export", "html", "pdf"],
+        run: () => setExportOpen(true)
+      },
+      {
+        id: "action:history",
+        type: "action",
+        title: "Open version history",
+        keywords: ["history", "snapshot", "restore"],
+        run: async () => openHistoryModal()
+      },
+      {
+        id: "action:user-guide",
+        type: "action",
+        title: "Open user guide",
+        keywords: ["guide", "help", "how to"],
+        run: () => setUserGuideOpen(true)
+      },
+      {
+        id: "action:links-local",
+        type: "action",
+        title: "Check links (local)",
+        keywords: ["link", "validate", "local"],
+        run: async () => runValidateLinks(false)
+      },
+      {
+        id: "action:links-external",
+        type: "action",
+        title: "Check links (local + external)",
+        keywords: ["link", "validate", "external"],
+        run: async () => runValidateLinks(true)
+      },
+      {
+        id: "action:tables",
+        type: "action",
+        title: "Format tables",
+        keywords: ["table", "format"],
+        run: () => formatTables()
+      },
+      {
+        id: "action:search",
+        type: "action",
+        title: "Focus workspace search",
+        keywords: ["search", "workspace", "find"],
+        run: () => focusWorkspaceSearch()
+      },
+      {
+        id: "action:sidebar",
+        type: "action",
+        title: sidebarCollapsed ? "Show file sidebar" : "Hide file sidebar",
+        keywords: ["sidebar", "files", "panel", "toggle"],
+        run: () => {
+          if (!workspaceFolder && !workspaceLoading) {
+            return;
+          }
+          setSidebarCollapsed((current) => !current);
+        }
+      }
+    ];
+
+    const fileItems: CommandPaletteItem[] = workspaceFiles.map((file) => ({
+      id: `file:${file.path}`,
+      type: "file",
+      title: file.name,
+      subtitle: file.relativePath,
+      keywords: ["file", "open", file.relativePath],
+      run: async () => {
+        await handleSidebarFileSelect(file.path);
+      }
+    }));
+
+    const headingItems: CommandPaletteItem[] = headings.map((heading) => ({
+      id: `heading:${heading.line}:${heading.slug}`,
+      type: "heading",
+      title: `${"#".repeat(heading.level)} ${heading.text}`,
+      subtitle: `Line ${heading.line}`,
+      keywords: ["heading", "jump", heading.slug, heading.text],
+      run: () => {
+        setTargetCursorLine(heading.line);
+      }
+    }));
+
+    return [...actions, ...fileItems, ...headingItems];
+  }, [
+    createNewDocument,
+    focusMode,
+    focusWorkspaceSearch,
+    formatTables,
+    handleSidebarFileSelect,
+    headings,
+    openFolderFromDialog,
+    openFromDialog,
+    openHistoryModal,
+    readMode,
+    runValidateLinks,
+    saveDocument,
+    sidebarCollapsed,
+    workspaceFolder,
+    workspaceLoading,
+    workspaceFiles
+  ]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -590,7 +1211,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isResizing) {
+    if (!focusMode) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      setFocusMode(false);
+      setFocusPreviewOnly(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [focusMode]);
+
+  useEffect(() => {
+    if (!isResizing || readMode || focusMode) {
       return;
     }
 
@@ -615,7 +1253,7 @@ export default function App() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [isResizing]);
+  }, [focusMode, isResizing, readMode]);
 
   useEffect(() => {
     const dispose = bindShortcuts({
@@ -630,11 +1268,17 @@ export default function App() {
       },
       onSaveAs: () => {
         void saveDocument(true, "manual");
+      },
+      onCommandPalette: () => {
+        setCommandPaletteOpen(true);
+      },
+      onWorkspaceSearch: () => {
+        focusWorkspaceSearch();
       }
     });
 
     return dispose;
-  }, [createNewDocument, openFromDialog, saveDocument]);
+  }, [createNewDocument, focusWorkspaceSearch, openFromDialog, saveDocument]);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent): void => {
@@ -659,12 +1303,24 @@ export default function App() {
           return;
         }
 
+        const droppedPath = payload.paths[0];
+
         void (async () => {
+          if (isImagePath(droppedPath)) {
+            await insertImageFromPath(droppedPath);
+            return;
+          }
+
+          if (!isTextOpenablePath(droppedPath)) {
+            setStatus("Unsupported dropped file type");
+            return;
+          }
+
           const canContinue = await ensureCanReplaceDocument("opening the dropped file");
           if (!canContinue) {
             return;
           }
-          await openDocumentAtPath(payload.paths![0]);
+          await openDocumentAtPath(droppedPath);
         })();
       })
       .then((unlisten) => {
@@ -676,7 +1332,7 @@ export default function App() {
         disposeDragDrop();
       }
     };
-  }, [ensureCanReplaceDocument, openDocumentAtPath]);
+  }, [ensureCanReplaceDocument, insertImageFromPath, openDocumentAtPath, setStatus]);
 
   useEffect(() => {
     const disposers: Array<() => void> = [];
@@ -714,6 +1370,7 @@ export default function App() {
     const disposers: Array<() => void> = [];
 
     void listen<string>("app://open-path", (event) => {
+      associatedPathOpenedRef.current = true;
       void handleOpenAssociatedPath(event.payload);
     }).then((dispose) => {
       disposers.push(dispose);
@@ -722,11 +1379,15 @@ export default function App() {
     void invoke<string | null>("take_pending_open_path")
       .then((path) => {
         if (path) {
+          associatedPathOpenedRef.current = true;
           void handleOpenAssociatedPath(path);
         }
       })
       .catch(() => {
-        // no-op: app can still be used normally without a launch path
+        // no-op
+      })
+      .finally(() => {
+        setAssociatedPathHandled(true);
       });
 
     return () => {
@@ -734,59 +1395,273 @@ export default function App() {
     };
   }, [handleOpenAssociatedPath]);
 
+  useEffect(() => {
+    if (!associatedPathHandled || sessionHydratedRef.current) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const state = await invoke<SessionState | null>("load_session_state");
+        if (!state) {
+          return;
+        }
+
+        setReaderPalette(state.readerPalette);
+        setUltraReadEnabled(state.ultraReadEnabled);
+        setUltraReadFixation(state.ultraReadFixation);
+        setUltraReadMinWordLength(state.ultraReadMinWordLength);
+        setUltraReadFocusWeight(state.ultraReadFocusWeight);
+
+        setReadMode(state.readMode);
+        setFocusMode(state.focusMode);
+        setFocusPreviewOnly(state.focusPreviewOnly);
+        setSplitRatio(Math.max(0.25, Math.min(0.75, state.splitRatio || 0.5)));
+
+        setCosmicOpen(state.cosmicOpen);
+        setCosmicPlaying(state.cosmicPlaying);
+        setCosmicWpm(state.cosmicWpm);
+        setCosmicIndex(state.cosmicIndex);
+        setCosmicBionic(state.cosmicBionic);
+        setCosmicPalette(state.cosmicPalette);
+        setCosmicWordSize(state.cosmicWordSize);
+        setCosmicBaseWeight(state.cosmicBaseWeight);
+        setCosmicFocusWeight(state.cosmicFocusWeight);
+        setCosmicFixation(state.cosmicFixation);
+        setCosmicMinWordLength(state.cosmicMinWordLength);
+
+        setActiveBlockIndex(state.activeBlockIndex);
+        setPreviewScrollTarget(state.previewScrollRatio);
+        setEditorScrollTarget(state.editorScrollRatio);
+        setCurrentPreviewScrollRatio(state.previewScrollRatio);
+        setCurrentEditorScrollRatio(state.editorScrollRatio);
+
+        if (state.workspaceFolder) {
+          await loadWorkspaceFolder(state.workspaceFolder);
+        }
+
+        if (!associatedPathOpenedRef.current && state.activePath) {
+          await openDocumentAtPath(state.activePath);
+
+          if (state.draftContent && state.draftContent !== useDocumentStore.getState().document.content) {
+            setContent(state.draftContent);
+          }
+        } else if (!associatedPathOpenedRef.current && !state.activePath && state.draftContent) {
+          newDocument();
+          setContent(state.draftContent);
+        }
+      } catch {
+        // session restore is best-effort
+      } finally {
+        sessionHydratedRef.current = true;
+      }
+    })();
+  }, [
+    associatedPathHandled,
+    loadWorkspaceFolder,
+    newDocument,
+    openDocumentAtPath,
+    setContent,
+    setReaderPalette,
+    setUltraReadEnabled,
+    setUltraReadFixation,
+    setUltraReadFocusWeight,
+    setUltraReadMinWordLength
+  ]);
+
+  useEffect(() => {
+    if (!sessionHydratedRef.current) {
+      return;
+    }
+
+    const sessionState: SessionState = {
+      workspaceFolder,
+      activePath: document.path,
+      draftContent: document.dirty ? document.content : null,
+      readMode,
+      focusMode,
+      focusPreviewOnly,
+      splitRatio,
+      readerPalette,
+      ultraReadEnabled: ultraRead.enabled,
+      ultraReadFixation: ultraRead.fixation,
+      ultraReadMinWordLength: ultraRead.minWordLength,
+      ultraReadFocusWeight: ultraRead.focusWeight,
+      cosmicOpen,
+      cosmicPlaying,
+      cosmicWpm,
+      cosmicIndex,
+      cosmicBionic,
+      cosmicPalette,
+      cosmicWordSize,
+      cosmicBaseWeight,
+      cosmicFocusWeight,
+      cosmicFixation,
+      cosmicMinWordLength,
+      activeBlockIndex,
+      previewScrollRatio: currentPreviewScrollRatio,
+      editorScrollRatio: currentEditorScrollRatio
+    };
+
+    const timeout = window.setTimeout(() => {
+      void invoke("save_session_state", { state: sessionState });
+    }, 500);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeBlockIndex,
+    cosmicBaseWeight,
+    cosmicBionic,
+    cosmicFixation,
+    cosmicFocusWeight,
+    cosmicIndex,
+    cosmicMinWordLength,
+    cosmicOpen,
+    cosmicPalette,
+    cosmicPlaying,
+    cosmicWpm,
+    cosmicWordSize,
+    currentEditorScrollRatio,
+    currentPreviewScrollRatio,
+    document.content,
+    document.dirty,
+    document.path,
+    focusMode,
+    focusPreviewOnly,
+    readMode,
+    readerPalette,
+    splitRatio,
+    ultraRead.enabled,
+    ultraRead.fixation,
+    ultraRead.focusWeight,
+    ultraRead.minWordLength,
+    workspaceFolder
+  ]);
+
   const layoutStyle = useMemo(() => {
-    if (isNarrow || readMode) {
+    if (isNarrow || readMode || focusMode) {
       return undefined;
     }
     return {
       gridTemplateColumns: `${splitRatio}fr 8px ${1 - splitRatio}fr`
     };
-  }, [isNarrow, readMode, splitRatio]);
+  }, [focusMode, isNarrow, readMode, splitRatio]);
 
-  const showSidebar = workspaceFolder !== null || workspaceLoading;
+  const sidebarAvailable = (workspaceFolder !== null || workspaceLoading) && !focusMode;
+  const showSidebar = sidebarAvailable && !sidebarCollapsed;
+  const showEditorPane = focusMode ? !focusPreviewOnly : !readMode;
+  const showPreviewPane = focusMode ? focusPreviewOnly : true;
 
   return (
-    <div className="app-shell" data-reader-palette={readerPalette}>
-      <TopBar
-        path={document.path}
-        dirty={document.dirty}
-        status={status}
-        error={error}
-        readerPalette={readerPalette}
-        ultraRead={ultraRead}
-        readMode={readMode}
-        cosmicOpen={cosmicOpen}
-        onNew={() => {
-          void createNewDocument();
-        }}
-        onOpen={() => {
-          void openFromDialog();
-        }}
-        onOpenFolder={() => {
-          void openFolderFromDialog();
-        }}
-        onSave={() => {
-          void saveDocument(false, "manual");
-        }}
-        onSaveAs={() => {
-          void saveDocument(true, "manual");
-        }}
-        onToggleReadMode={() => {
-          setReadMode((current) => !current);
-        }}
-        onToggleCosmic={toggleCosmic}
-        onReaderPaletteChange={handleReaderPaletteChange}
-        onUltraReadEnabledChange={setUltraReadEnabled}
-        onUltraReadFixationChange={handleUltraReadFixationChange}
-        onUltraReadMinWordLengthChange={handleUltraReadMinWordLengthChange}
-        onUltraReadFocusWeightChange={handleUltraReadFocusWeightChange}
-      />
+    <div className={`app-shell${focusMode ? " is-focus-mode" : ""}`} data-reader-palette={readerPalette}>
+      {!focusMode ? (
+        <TopBar
+          path={document.path}
+          dirty={document.dirty}
+          status={status}
+          error={error}
+          readerPalette={readerPalette}
+          ultraRead={ultraRead}
+          readMode={readMode}
+          focusMode={focusMode}
+          checklistLabel={checklistLabel}
+          cosmicOpen={cosmicOpen}
+          sidebarAvailable={workspaceFolder !== null || workspaceLoading}
+          sidebarCollapsed={sidebarCollapsed}
+          onNew={() => {
+            void createNewDocument();
+          }}
+          onOpen={() => {
+            void openFromDialog();
+          }}
+          onOpenFolder={() => {
+            void openFolderFromDialog();
+          }}
+          onSave={() => {
+            void saveDocument(false, "manual");
+          }}
+          onSaveAs={() => {
+            void saveDocument(true, "manual");
+          }}
+          onOpenCommandPalette={() => {
+            setCommandPaletteOpen(true);
+          }}
+          onOpenExport={() => {
+            setExportOpen(true);
+          }}
+          onOpenHistory={() => {
+            void openHistoryModal();
+          }}
+          onOpenUserGuide={() => {
+            setUserGuideOpen(true);
+          }}
+          onValidateLinks={() => {
+            void runValidateLinks(false);
+          }}
+          onFormatTables={formatTables}
+          onToggleReadMode={() => {
+            setReadMode((current) => {
+              const next = !current;
+              if (next) {
+                setFocusMode(false);
+                setFocusPreviewOnly(false);
+              }
+              return next;
+            });
+          }}
+          onToggleFocusMode={() => {
+            setFocusMode((current) => {
+              const next = !current;
+              if (next) {
+                setReadMode(false);
+                setFocusPreviewOnly(false);
+              }
+              return next;
+            });
+          }}
+          onToggleCosmic={toggleCosmic}
+          onReaderPaletteChange={handleReaderPaletteChange}
+          onUltraReadEnabledChange={setUltraReadEnabled}
+          onUltraReadFixationChange={handleUltraReadFixationChange}
+          onUltraReadMinWordLengthChange={handleUltraReadMinWordLengthChange}
+          onUltraReadFocusWeightChange={handleUltraReadFocusWeightChange}
+          onToggleSidebar={() => {
+            setSidebarCollapsed((current) => !current);
+          }}
+        />
+      ) : (
+        <div className="focus-floating-controls">
+          <button
+            type="button"
+            onClick={() => {
+              setFocusPreviewOnly((current) => !current);
+            }}
+          >
+            {focusPreviewOnly ? "Editor" : "Preview"}
+          </button>
+          <button type="button" onClick={() => setCommandPaletteOpen(true)}>
+            Cmd+K
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFocusMode(false);
+              setFocusPreviewOnly(false);
+            }}
+          >
+            Exit Focus
+          </button>
+        </div>
+      )}
 
       <section className={`workspace-shell${showSidebar ? " has-sidebar" : ""}`}>
         {showSidebar ? (
           <FileSidebar
             folderPath={workspaceFolder}
             files={workspaceFiles}
+            searchQuery={searchQuery}
+            searchHits={searchHits}
+            searching={searchingWorkspace}
             activePath={document.path}
             loading={workspaceLoading}
             onOpenFolder={() => {
@@ -795,7 +1670,17 @@ export default function App() {
             onRefreshFolder={() => {
               if (workspaceFolder) {
                 void loadWorkspaceFolder(workspaceFolder);
+                if (searchQuery.trim().length > 0) {
+                  void runWorkspaceSearch();
+                }
               }
+            }}
+            onCollapse={() => {
+              setSidebarCollapsed(true);
+            }}
+            onSearchQueryChange={setSearchQuery}
+            onSelectSearchHit={(hit) => {
+              void handleSearchHitSelect(hit);
             }}
             onSelectFile={(path) => {
               void handleSidebarFileSelect(path);
@@ -804,18 +1689,22 @@ export default function App() {
         ) : null}
 
         <main className={`editor-layout${readMode ? " is-read-mode" : ""}`} ref={layoutRef} style={layoutStyle}>
-          {!readMode ? (
+          {showEditorPane ? (
             <section className="pane pane-editor">
               <EditorPane
                 value={document.content}
                 targetScrollRatio={editorScrollTarget}
+                targetCursorLine={targetCursorLine}
+                insertTextRequest={insertTextRequest}
                 onChange={setContent}
                 onCursorLineChange={handleCursorLineChange}
                 onScrollRatioChange={handleEditorScroll}
+                onClipboardImagePaste={handleClipboardImagePaste}
               />
             </section>
           ) : null}
-          {!readMode ? (
+
+          {showEditorPane && showPreviewPane ? (
             <div
               className="pane-divider"
               role="separator"
@@ -824,23 +1713,26 @@ export default function App() {
               onMouseDown={() => setIsResizing(true)}
             />
           ) : null}
-          <section
-            className="pane pane-preview"
-            style={
-              {
-                "--bionic-focus-weight": String(Math.round(ultraRead.focusWeight))
-              } as CSSProperties
-            }
-          >
-            <PreviewPane
-              html={previewHtml}
-              activeBlockIndex={activeBlockIndex}
-              targetScrollRatio={previewScrollTarget}
-              onScrollRatioChange={handlePreviewScroll}
-              onExternalLink={handleExternalLink}
-              ultraReadEnabled={ultraRead.enabled}
-            />
-          </section>
+
+          {showPreviewPane ? (
+            <section
+              className="pane pane-preview"
+              style={
+                {
+                  "--bionic-focus-weight": String(Math.round(ultraRead.focusWeight))
+                } as CSSProperties
+              }
+            >
+              <PreviewPane
+                html={previewHtml}
+                activeBlockIndex={activeBlockIndex}
+                targetScrollRatio={previewScrollTarget}
+                onScrollRatioChange={handlePreviewScroll}
+                onExternalLink={handleExternalLink}
+                ultraReadEnabled={ultraRead.enabled}
+              />
+            </section>
+          ) : null}
         </main>
       </section>
 
@@ -885,6 +1777,43 @@ export default function App() {
         onFixationChange={handleCosmicFixationChange}
         onMinWordLengthChange={handleCosmicMinWordLengthChange}
         renderWord={renderCosmicWord}
+      />
+
+      <CommandPalette
+        open={commandPaletteOpen}
+        items={commandPaletteItems}
+        onClose={() => setCommandPaletteOpen(false)}
+      />
+
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        onSelect={(profile) => {
+          void handleExportSelect(profile);
+        }}
+      />
+
+      <HistoryModal
+        open={historyOpen}
+        snapshots={snapshots}
+        loading={historyLoading}
+        onClose={() => setHistoryOpen(false)}
+        onRestore={(snapshotId) => {
+          void restoreSnapshot(snapshotId);
+        }}
+      />
+
+      <UserGuideModal open={userGuideOpen} onClose={() => setUserGuideOpen(false)} />
+
+      <LinkValidationModal
+        open={validationOpen}
+        issues={validationIssues}
+        checkedExternal={validationCheckedExternal}
+        onClose={() => setValidationOpen(false)}
+        onJumpToLine={(line) => {
+          setValidationOpen(false);
+          setTargetCursorLine(Math.max(1, Math.round(line)));
+        }}
       />
     </div>
   );

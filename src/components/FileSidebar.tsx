@@ -1,12 +1,18 @@
-import type { MarkdownFileEntry } from "../types/app";
+import type { MarkdownFileEntry, SearchHit } from "../types/app";
 
 interface FileSidebarProps {
   folderPath: string | null;
   files: MarkdownFileEntry[];
+  searchQuery: string;
+  searchHits: SearchHit[];
+  searching: boolean;
   activePath: string | null;
   loading: boolean;
   onOpenFolder: () => void;
   onRefreshFolder: () => void;
+  onCollapse: () => void;
+  onSearchQueryChange: (value: string) => void;
+  onSelectSearchHit: (hit: SearchHit) => void;
   onSelectFile: (path: string) => void;
 }
 
@@ -23,10 +29,16 @@ const truncateFolder = (path: string | null): string => {
 export default function FileSidebar({
   folderPath,
   files,
+  searchQuery,
+  searchHits,
+  searching,
   activePath,
   loading,
   onOpenFolder,
   onRefreshFolder,
+  onCollapse,
+  onSearchQueryChange,
+  onSelectSearchHit,
   onSelectFile
 }: FileSidebarProps) {
   return (
@@ -45,7 +57,19 @@ export default function FileSidebar({
               Refresh
             </button>
           ) : null}
+          <button type="button" onClick={onCollapse} title="Hide file sidebar">
+            Hide
+          </button>
         </div>
+        {folderPath ? (
+          <input
+            className="sidebar-search-input"
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            placeholder="Search in workspace..."
+            aria-label="Search markdown files in workspace"
+          />
+        ) : null}
       </div>
 
       <div className="file-sidebar-list">
@@ -67,6 +91,28 @@ export default function FileSidebar({
               <span className="file-item-path">{file.relativePath}</span>
             </button>
           ))}
+        {folderPath && searchQuery.trim().length > 0 ? (
+          <div className="search-results">
+            <h3>Search Results</h3>
+            {searching ? <p className="file-sidebar-empty">Searching...</p> : null}
+            {!searching && searchHits.length === 0 ? (
+              <p className="file-sidebar-empty">No matches found.</p>
+            ) : null}
+            {!searching &&
+              searchHits.map((hit) => (
+                <button
+                  key={`${hit.path}-${hit.line}-${hit.snippet}`}
+                  type="button"
+                  className="search-hit"
+                  onClick={() => onSelectSearchHit(hit)}
+                >
+                  <strong>{hit.relativePath}</strong>
+                  <span>Line {hit.line}</span>
+                  <span>{hit.snippet}</span>
+                </button>
+              ))}
+          </div>
+        ) : null}
       </div>
     </aside>
   );

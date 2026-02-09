@@ -1,8 +1,10 @@
 mod commands;
 
 use commands::{
-    export_logs, list_markdown_files, load_recovery_draft, open_document, save_as_document,
-    save_document, store_recovery_draft,
+    create_snapshot, export_logs, import_image_asset, list_markdown_files, list_snapshots,
+    load_recovery_draft, load_session_state, load_snapshot, open_document, save_as_document,
+    save_document, save_image_asset, save_session_state, search_workspace, store_recovery_draft,
+    validate_links, write_text_file,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -103,6 +105,16 @@ fn main() {
             load_recovery_draft,
             store_recovery_draft,
             list_markdown_files,
+            search_workspace,
+            save_image_asset,
+            import_image_asset,
+            create_snapshot,
+            list_snapshots,
+            load_snapshot,
+            validate_links,
+            save_session_state,
+            load_session_state,
+            write_text_file,
             export_logs,
             take_pending_open_path
         ])

@@ -66,4 +66,18 @@ describe("document store", () => {
     expect(state.ultraRead.minWordLength).toBe(5);
     expect(state.ultraRead.focusWeight).toBe(840);
   });
+
+  it("loads snapshot content as dirty state", () => {
+    useDocumentStore.getState().loadDocumentDirty({
+      path: "/tmp/history.md",
+      content: "snapshot text",
+      mtimeMs: 3000
+    });
+
+    const state = useDocumentStore.getState();
+    expect(state.document.path).toBe("/tmp/history.md");
+    expect(state.document.content).toBe("snapshot text");
+    expect(state.document.dirty).toBe(true);
+    expect(state.document.lastSavedAtMs).toBeNull();
+  });
 });

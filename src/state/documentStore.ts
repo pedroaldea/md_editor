@@ -16,6 +16,7 @@ interface DocumentStore {
   error: AppError | null;
   setContent: (content: string) => void;
   loadDocument: (document: OpenDocumentResult) => void;
+  loadDocumentDirty: (document: OpenDocumentResult) => void;
   markSaved: (result: SaveResult) => void;
   markRecovered: (content: string) => void;
   newDocument: () => void;
@@ -75,6 +76,18 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
         dirty: false,
         mtimeMs: document.mtimeMs,
         lastSavedAtMs: Date.now(),
+        recovered: false
+      },
+      error: null
+    }),
+  loadDocumentDirty: (document: OpenDocumentResult) =>
+    set({
+      document: {
+        path: document.path,
+        content: document.content,
+        dirty: true,
+        mtimeMs: document.mtimeMs,
+        lastSavedAtMs: null,
         recovered: false
       },
       error: null

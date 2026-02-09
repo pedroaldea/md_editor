@@ -46,3 +46,75 @@ export interface MarkdownFileEntry {
   name: string;
   relativePath: string;
 }
+
+export interface SearchHit {
+  path: string;
+  name: string;
+  relativePath: string;
+  line: number;
+  snippet: string;
+}
+
+export interface SavedImageAsset {
+  path: string;
+  relativePath: string;
+}
+
+export interface SnapshotEntry {
+  id: string;
+  createdAtMs: number;
+  reason: string;
+  sizeBytes: number;
+}
+
+export interface LinkValidationIssue {
+  line: number;
+  link: string;
+  severity: "error" | "warning";
+  message: string;
+}
+
+export interface LinkValidationReport {
+  checkedExternal: boolean;
+  issues: LinkValidationIssue[];
+}
+
+export type ExportProfile = "clean-markdown" | "html" | "pdf-print";
+
+export interface SessionState {
+  workspaceFolder: string | null;
+  activePath: string | null;
+  draftContent: string | null;
+  readMode: boolean;
+  focusMode: boolean;
+  focusPreviewOnly: boolean;
+  splitRatio: number;
+  readerPalette: ReaderPalette;
+  ultraReadEnabled: boolean;
+  ultraReadFixation: number;
+  ultraReadMinWordLength: number;
+  ultraReadFocusWeight: number;
+  cosmicOpen: boolean;
+  cosmicPlaying: boolean;
+  cosmicWpm: number;
+  cosmicIndex: number;
+  cosmicBionic: boolean;
+  cosmicPalette: ReaderPalette;
+  cosmicWordSize: number;
+  cosmicBaseWeight: number;
+  cosmicFocusWeight: number;
+  cosmicFixation: number;
+  cosmicMinWordLength: number;
+  activeBlockIndex: number;
+  previewScrollRatio: number | null;
+  editorScrollRatio: number | null;
+}
+
+export interface CommandPaletteItem {
+  id: string;
+  type: "action" | "file" | "heading";
+  title: string;
+  subtitle?: string;
+  keywords: string[];
+  run: () => void | Promise<void>;
+}

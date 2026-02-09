@@ -3,6 +3,8 @@ interface ShortcutHandlers {
   onOpen: () => void;
   onSave: () => void;
   onSaveAs: () => void;
+  onCommandPalette: () => void;
+  onWorkspaceSearch: () => void;
 }
 
 const isApplePlatform = (): boolean => navigator.userAgent.includes("Mac");
@@ -37,6 +39,18 @@ export const bindShortcuts = (handlers: ShortcutHandlers): (() => void) => {
     if (key === "s") {
       event.preventDefault();
       handlers.onSave();
+      return;
+    }
+
+    if (key === "k") {
+      event.preventDefault();
+      handlers.onCommandPalette();
+      return;
+    }
+
+    if (key === "f" && event.shiftKey) {
+      event.preventDefault();
+      handlers.onWorkspaceSearch();
     }
   };
 

@@ -7,9 +7,16 @@ import { basicSetup } from "codemirror";
 interface EditorPaneProps {
   value: string;
   targetScrollRatio: number | null;
+  targetCursorLine: number | null;
+  insertTextRequest: { id: number; text: string } | null;
   onChange: (value: string) => void;
   onCursorLineChange: (lineNumber: number) => void;
   onScrollRatioChange: (ratio: number) => void;
+  onClipboardImagePaste: (payload: {
+    fileName: string;
+    mimeType: string;
+    base64Data: string;
+  }) => Promise<string | null>;
 }
 
 const editorTheme = EditorView.theme(
@@ -38,14 +45,18 @@ const editorTheme = EditorView.theme(
 export default function EditorPane({
   value,
   targetScrollRatio,
+  targetCursorLine,
+  insertTextRequest,
   onChange,
   onCursorLineChange,
-  onScrollRatioChange
+  onScrollRatioChange,
+  onClipboardImagePaste
 }: EditorPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingExternalContentRef = useRef(false);
   const applyingExternalScrollRef = useRef(false);
+  const lastInsertRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || viewRef.current) {
@@ -87,15 +98,71 @@ export default function EditorPane({
     };
 
     view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
+
+    const toBase64 = async (file: File): Promise<string> => {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 1) {
+        binary += String.fromCharCode(bytes[index]);
+      }
+      return btoa(binary);
+    };
+
+    const onPaste = (event: ClipboardEvent): void => {
+      const clipboardItems = event.clipboardData?.items;
+      if (!clipboardItems || clipboardItems.length === 0) {
+        return;
+      }
+
+      const imageItem = Array.from(clipboardItems).find((item) =>
+        item.type.toLowerCase().startsWith("image/")
+      );
+      if (!imageItem) {
+        return;
+      }
+
+      const file = imageItem.getAsFile();
+      if (!file) {
+        return;
+      }
+
+      event.preventDefault();
+      void (async () => {
+        const base64Data = await toBase64(file);
+        const markdownSnippet = await onClipboardImagePaste({
+          fileName: file.name || "clipboard-image.png",
+          mimeType: file.type || "image/png",
+          base64Data
+        });
+
+        if (!markdownSnippet || !viewRef.current) {
+          return;
+        }
+
+        const currentSelection = viewRef.current.state.selection.main;
+        viewRef.current.dispatch({
+          changes: {
+            from: currentSelection.from,
+            to: currentSelection.to,
+            insert: markdownSnippet
+          },
+          selection: { anchor: currentSelection.from + markdownSnippet.length }
+        });
+      })();
+    };
+
+    view.contentDOM.addEventListener("paste", onPaste);
     viewRef.current = view;
     onCursorLineChange(1);
 
     return () => {
       view.scrollDOM.removeEventListener("scroll", onScroll);
+      view.contentDOM.removeEventListener("paste", onPaste);
       view.destroy();
       viewRef.current = null;
     };
-  }, [onChange, onCursorLineChange, onScrollRatioChange, value]);
+  }, [onChange, onClipboardImagePaste, onCursorLineChange, onScrollRatioChange, value]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -128,6 +195,47 @@ export default function EditorPane({
       applyingExternalScrollRef.current = false;
     });
   }, [targetScrollRatio]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || targetCursorLine === null) {
+      return;
+    }
+
+    const safeLine = Math.max(1, Math.min(targetCursorLine, view.state.doc.lines));
+    const line = view.state.doc.line(safeLine);
+    view.dispatch({
+      selection: { anchor: line.from },
+      scrollIntoView: true
+    });
+    view.focus();
+  }, [targetCursorLine]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !insertTextRequest) {
+      return;
+    }
+
+    if (lastInsertRequestIdRef.current === insertTextRequest.id) {
+      return;
+    }
+    lastInsertRequestIdRef.current = insertTextRequest.id;
+
+    const selection = view.state.selection.main;
+    view.dispatch({
+      changes: {
+        from: selection.from,
+        to: selection.to,
+        insert: insertTextRequest.text
+      },
+      selection: {
+        anchor: selection.from + insertTextRequest.text.length
+      },
+      scrollIntoView: true
+    });
+    view.focus();
+  }, [insertTextRequest]);
 
   return <div className="editor-pane" ref={containerRef} />;
 }

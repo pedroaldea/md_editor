@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   applyBionicReading,
+  extractHeadings,
   getBlockIndexForLine,
+  getChecklistProgress,
   renderMarkdown
 } from "../../src/lib/markdown";
 
@@ -29,6 +31,13 @@ describe("renderMarkdown", () => {
   it("sanitizes unsafe script tags", () => {
     const rendered = renderMarkdown("hello\n\n<script>alert('xss')</script>");
     expect(rendered.html).not.toContain("<script>");
+  });
+
+  it("renders footnotes with references", () => {
+    const rendered = renderMarkdown("Reference[^a]\n\n[^a]: My note");
+    expect(rendered.html).toContain("footnote-ref");
+    expect(rendered.html).toContain("footnotes");
+    expect(rendered.html).toContain("My note");
   });
 });
 
@@ -66,5 +75,24 @@ describe("applyBionicReading", () => {
 
     expect(transformed).not.toContain("bionic-focus");
     expect(transformed).toContain("const value = 42;");
+  });
+});
+
+describe("extractHeadings", () => {
+  it("extracts heading entries with levels and lines", () => {
+    const headings = extractHeadings("# Title\n\n## Section\nText");
+    expect(headings).toEqual([
+      { line: 1, level: 1, text: "Title", slug: "title" },
+      { line: 3, level: 2, text: "Section", slug: "section" }
+    ]);
+  });
+});
+
+describe("getChecklistProgress", () => {
+  it("counts checklist completion", () => {
+    const progress = getChecklistProgress("- [x] one\n- [ ] two\n- [X] three");
+    expect(progress.total).toBe(3);
+    expect(progress.completed).toBe(2);
+    expect(progress.percent).toBe(67);
   });
 });
