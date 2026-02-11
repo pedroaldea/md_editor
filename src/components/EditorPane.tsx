@@ -57,6 +57,26 @@ export default function EditorPane({
   const applyingExternalContentRef = useRef(false);
   const applyingExternalScrollRef = useRef(false);
   const lastInsertRequestIdRef = useRef<number | null>(null);
+  const onChangeRef = useRef(onChange);
+  const onCursorLineChangeRef = useRef(onCursorLineChange);
+  const onScrollRatioChangeRef = useRef(onScrollRatioChange);
+  const onClipboardImagePasteRef = useRef(onClipboardImagePaste);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    onCursorLineChangeRef.current = onCursorLineChange;
+  }, [onCursorLineChange]);
+
+  useEffect(() => {
+    onScrollRatioChangeRef.current = onScrollRatioChange;
+  }, [onScrollRatioChange]);
+
+  useEffect(() => {
+    onClipboardImagePasteRef.current = onClipboardImagePaste;
+  }, [onClipboardImagePaste]);
 
   useEffect(() => {
     if (!containerRef.current || viewRef.current) {
@@ -65,12 +85,12 @@ export default function EditorPane({
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged && !applyingExternalContentRef.current) {
-        onChange(update.state.doc.toString());
+        onChangeRef.current(update.state.doc.toString());
       }
 
       if (update.docChanged || update.selectionSet) {
         const line = update.state.doc.lineAt(update.state.selection.main.head).number;
-        onCursorLineChange(line);
+        onCursorLineChangeRef.current(line);
       }
     });
 
@@ -94,7 +114,7 @@ export default function EditorPane({
       }
       const maxScrollable = view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight;
       const ratio = maxScrollable > 0 ? view.scrollDOM.scrollTop / maxScrollable : 0;
-      onScrollRatioChange(ratio);
+      onScrollRatioChangeRef.current(ratio);
     };
 
     view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
@@ -130,7 +150,7 @@ export default function EditorPane({
       event.preventDefault();
       void (async () => {
         const base64Data = await toBase64(file);
-        const markdownSnippet = await onClipboardImagePaste({
+        const markdownSnippet = await onClipboardImagePasteRef.current({
           fileName: file.name || "clipboard-image.png",
           mimeType: file.type || "image/png",
           base64Data
@@ -154,7 +174,7 @@ export default function EditorPane({
 
     view.contentDOM.addEventListener("paste", onPaste);
     viewRef.current = view;
-    onCursorLineChange(1);
+    onCursorLineChangeRef.current(1);
 
     return () => {
       view.scrollDOM.removeEventListener("scroll", onScroll);
@@ -162,7 +182,7 @@ export default function EditorPane({
       view.destroy();
       viewRef.current = null;
     };
-  }, [onChange, onClipboardImagePaste, onCursorLineChange, onScrollRatioChange, value]);
+  }, []);
 
   useEffect(() => {
     const view = viewRef.current;
