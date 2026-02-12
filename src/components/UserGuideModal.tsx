@@ -50,7 +50,10 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
             <ul>
               <li>Press `Cmd+K` to open the command palette and jump to actions/files/headings.</li>
               <li>Use workspace search in the sidebar to find text across your folder.</li>
-              <li>Paste or drop images and the app inserts them directly into your markdown.</li>
+              <li>Save or open a document first when you want to insert images.</li>
+              <li>Paste an image from your clipboard or drop an image file into the app window.</li>
+              <li>The app stores the image in an `assets/` folder next to your document.</li>
+              <li>The app inserts `![alt](relative/path)` markdown for the image automatically.</li>
               <li>Use `History` to restore older local versions of your file.</li>
             </ul>
           </section>

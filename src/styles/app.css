@@ -630,14 +630,14 @@ button:disabled {
   padding: 7px;
   border: 1px solid var(--border-soft);
   border-radius: 11px;
-  background: rgba(12, 13, 16, 0.9);
+  background: var(--bg-panel-strong);
   box-shadow: var(--shadow-soft);
 }
 
 .focus-floating-controls button {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-panel);
   color: var(--text-primary);
   padding: 5px 9px;
   font-size: 11px;
