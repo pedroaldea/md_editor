@@ -38,6 +38,7 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
             <h3>Write and read</h3>
             <ul>
               <li>Left side is the editor, right side is the live preview.</li>
+              <li>Type `/` in the editor to open quick markdown formatting commands.</li>
               <li>Use `Read` for a cleaner reading view.</li>
               <li>Use `Focus` to hide extra UI and concentrate on writing.</li>
               <li>Use `Ultra` + `Reader` settings to tune reading comfort.</li>

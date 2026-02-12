@@ -64,8 +64,19 @@ fn build_file_menu(app: &mut tauri::App) -> tauri::Result<()> {
         .text("help_export_logs", "Export Logs...")
         .build()?;
 
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .item(&PredefinedMenuItem::undo(app, None)?)
+        .item(&PredefinedMenuItem::redo(app, None)?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, None)?)
+        .item(&PredefinedMenuItem::copy(app, None)?)
+        .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&PredefinedMenuItem::select_all(app, None)?)
+        .build()?;
+
     let menu = MenuBuilder::new(app)
         .item(&file_menu)
+        .item(&edit_menu)
         .item(&help_menu)
         .build()?;
     app.set_menu(menu)?;

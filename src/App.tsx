@@ -48,6 +48,10 @@ const MARKDOWN_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "txt
 const LOG_FILTER = [{ name: "Log", extensions: ["log", "txt"] }];
 const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
 
+const isTauriRuntime = (): boolean =>
+  typeof window !== "undefined" &&
+  Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
 const normalizeError = (value: unknown): AppError => {
   if (typeof value === "string") {
     try {
@@ -1295,6 +1299,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     let disposeDragDrop: (() => void) | undefined;
     void getCurrentWindow()
       .onDragDropEvent((event) => {
@@ -1335,6 +1343,10 @@ export default function App() {
   }, [ensureCanReplaceDocument, insertImageFromPath, openDocumentAtPath, setStatus]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     const disposers: Array<() => void> = [];
 
     void listen<string>("menu://command", async (event) => {
@@ -1367,6 +1379,11 @@ export default function App() {
   }, [createNewDocument, exportLogs, openFromDialog, saveDocument]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      setAssociatedPathHandled(true);
+      return;
+    }
+
     const disposers: Array<() => void> = [];
 
     void listen<string>("app://open-path", (event) => {
