@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -6,16 +6,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import CommandPalette from "./components/CommandPalette";
-import CosmicFocusOverlay from "./components/CosmicFocusOverlay";
 import EditorPane from "./components/EditorPane";
-import ExportModal from "./components/ExportModal";
 import FileSidebar from "./components/FileSidebar";
-import HistoryModal from "./components/HistoryModal";
-import LinkValidationModal from "./components/LinkValidationModal";
 import PreviewPane from "./components/PreviewPane";
 import TopBar from "./components/TopBar";
-import UserGuideModal from "./components/UserGuideModal";
-import { runPdfPrint } from "./lib/export";
+import { buildHtmlExportDocument, runPdfPrint } from "./lib/export";
 import {
   applyBionicReading,
   extractHeadings,
@@ -47,6 +42,12 @@ import type {
 const MARKDOWN_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }];
 const LOG_FILTER = [{ name: "Log", extensions: ["log", "txt"] }];
 const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
+
+const CosmicFocusOverlay = lazy(() => import("./components/CosmicFocusOverlay"));
+const ExportModal = lazy(() => import("./components/ExportModal"));
+const HistoryModal = lazy(() => import("./components/HistoryModal"));
+const LinkValidationModal = lazy(() => import("./components/LinkValidationModal"));
+const UserGuideModal = lazy(() => import("./components/UserGuideModal"));
 
 const isTauriRuntime = (): boolean =>
   typeof window !== "undefined" &&
@@ -89,6 +90,46 @@ const hasUnsavedChanges = (): boolean => useDocumentStore.getState().document.di
 const isPathInsideFolder = (path: string, folderPath: string): boolean =>
   path === folderPath || path.startsWith(`${folderPath}/`);
 
+const hasProtocolPrefix = (value: string): boolean => /^[a-z][a-z\d+\-.]*:/iu.test(value);
+
+const normalizeFsPath = (value: string): string => value.replace(/\\/gu, "/");
+
+const collapseSegments = (value: string): string => {
+  const normalized = normalizeFsPath(value);
+  const absolute = normalized.startsWith("/");
+  const segments = normalized.split("/");
+  const collapsed: string[] = [];
+
+  for (const segment of segments) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (collapsed.length > 0) {
+        collapsed.pop();
+      }
+      continue;
+    }
+    collapsed.push(segment);
+  }
+
+  if (absolute) {
+    return `/${collapsed.join("/")}`;
+  }
+  return collapsed.join("/");
+};
+
+const resolveRelativePath = (documentPath: string, linkPath: string): string => {
+  if (linkPath.startsWith("/")) {
+    return collapseSegments(linkPath);
+  }
+
+  const normalizedDocument = normalizeFsPath(documentPath);
+  const separatorIndex = normalizedDocument.lastIndexOf("/");
+  const baseDirectory = separatorIndex > 0 ? normalizedDocument.slice(0, separatorIndex) : "/";
+  return collapseSegments(`${baseDirectory}/${linkPath}`);
+};
+
 const isTextOpenablePath = (path: string): boolean => {
   const lower = path.toLowerCase();
   return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt");
@@ -106,50 +147,6 @@ const isImagePath = (path: string): boolean => {
     lower.endsWith(".svg")
   );
 };
-
-const buildHtmlExport = (title: string, bodyHtml: string): string => `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${title}</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body {
-      margin: 0;
-      padding: 2rem;
-      font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
-      line-height: 1.7;
-      font-size: 16px;
-      background: #0f1115;
-      color: #e5ecf3;
-    }
-    main { max-width: 96ch; margin: 0 auto; }
-    code, pre { font-family: "JetBrains Mono", "SF Mono", monospace; }
-    pre {
-      background: #111723;
-      border-radius: 10px;
-      padding: 12px;
-      overflow: auto;
-    }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-    }
-    th, td {
-      border: 1px solid #2f3948;
-      padding: 8px;
-      text-align: left;
-      vertical-align: top;
-    }
-    a { color: #66d9ff; }
-    img { max-width: 100%; height: auto; border-radius: 6px; }
-  </style>
-</head>
-<body>
-  <main>${bodyHtml}</main>
-</body>
-</html>`;
 
 export default function App() {
   const {
@@ -181,6 +178,7 @@ export default function App() {
   const [targetCursorLine, setTargetCursorLine] = useState<number | null>(null);
   const [insertTextRequest, setInsertTextRequest] = useState<{ id: number; text: string } | null>(null);
   const insertRequestIdRef = useRef(0);
+  const saveInFlightRef = useRef(false);
 
   const [saving, setSaving] = useState(false);
   const [splitRatio, setSplitRatio] = useState(0.5);
@@ -417,10 +415,11 @@ export default function App() {
 
   const saveDocument = useCallback(
     async (forceSaveAs: boolean, reason: "manual" | "autosave"): Promise<boolean> => {
-      if (saving) {
+      if (saveInFlightRef.current) {
         return false;
       }
 
+      saveInFlightRef.current = true;
       setSaving(true);
       const snapshot = useDocumentStore.getState().document;
 
@@ -482,10 +481,11 @@ export default function App() {
         setStatus(reason === "autosave" ? "Autosave failed" : "Save failed");
         return false;
       } finally {
+        saveInFlightRef.current = false;
         setSaving(false);
       }
     },
-    [markSaved, saving, setError, setStatus]
+    [markSaved, setError, setStatus]
   );
 
   const ensureCanReplaceDocument = useCallback(
@@ -626,6 +626,47 @@ export default function App() {
       window.open(href, "_blank", "noopener,noreferrer");
     }
   }, []);
+
+  const handleLocalLink = useCallback(
+    async (href: string) => {
+      const [withoutAnchor] = href.split("#");
+      const [rawPath] = (withoutAnchor ?? "").split("?");
+      const trimmedPath = (rawPath ?? "").trim();
+      if (!trimmedPath || hasProtocolPrefix(trimmedPath)) {
+        return;
+      }
+
+      let decodedPath = trimmedPath;
+      try {
+        decodedPath = decodeURIComponent(trimmedPath);
+      } catch {
+        // Keep original path if decoding fails.
+      }
+
+      const currentPath = useDocumentStore.getState().document.path;
+      if (!currentPath) {
+        setStatus("Open or save the current document before following local links");
+        return;
+      }
+
+      const resolvedPath = resolveRelativePath(currentPath, decodedPath);
+      if (!isTextOpenablePath(resolvedPath)) {
+        setStatus("Only local .md, .markdown, and .txt links are supported");
+        return;
+      }
+
+      if (currentPath === resolvedPath) {
+        return;
+      }
+
+      const canContinue = await ensureCanReplaceDocument("opening linked file");
+      if (!canContinue) {
+        return;
+      }
+      await openDocumentAtPath(resolvedPath);
+    },
+    [ensureCanReplaceDocument, openDocumentAtPath, setStatus]
+  );
 
   const ensureDocumentPathForAssets = useCallback(async (): Promise<string | null> => {
     const current = useDocumentStore.getState().document;
@@ -942,7 +983,7 @@ export default function App() {
         }
 
         try {
-          const html = buildHtmlExport(defaultBase, rendered.html);
+          const html = buildHtmlExportDocument(defaultBase, rendered.html);
           await invoke("write_text_file", {
             path: selected,
             content: html
@@ -1017,8 +1058,8 @@ export default function App() {
       {
         id: "action:read",
         type: "action",
-        title: readMode ? "Disable read mode" : "Enable read mode",
-        keywords: ["read", "preview", "mode"],
+        title: readMode ? "Disable reading mode" : "Enable reading mode",
+        keywords: ["reading", "read", "preview", "mode"],
         run: () => {
           setReadMode((current) => {
             const next = !current;
@@ -1746,6 +1787,7 @@ export default function App() {
                 targetScrollRatio={previewScrollTarget}
                 onScrollRatioChange={handlePreviewScroll}
                 onExternalLink={handleExternalLink}
+                onLocalLink={handleLocalLink}
                 ultraReadEnabled={ultraRead.enabled}
               />
             </section>
@@ -1753,48 +1795,52 @@ export default function App() {
         </main>
       </section>
 
-      <CosmicFocusOverlay
-        open={cosmicOpen}
-        words={cosmicWords}
-        currentIndex={cosmicIndex}
-        isPlaying={cosmicPlaying}
-        wpm={cosmicWpm}
-        bionicEnabled={cosmicBionic}
-        palette={cosmicPalette}
-        wordSize={cosmicWordSize}
-        baseWeight={cosmicBaseWeight}
-        focusWeight={cosmicFocusWeight}
-        fixation={cosmicFixation}
-        minWordLength={cosmicMinWordLength}
-        onClose={() => {
-          setCosmicOpen(false);
-          setCosmicPlaying(false);
-        }}
-        onTogglePlay={() => {
-          if (cosmicWords.length === 0) {
-            return;
-          }
-          setCosmicPlaying((current) => !current);
-        }}
-        onReset={() => {
-          setCosmicIndex(0);
-          setCosmicPlaying(false);
-        }}
-        onSeek={(index) => {
-          setCosmicIndex(index);
-        }}
-        onWpmChange={(wpm) => {
-          setCosmicWpm(Math.max(120, Math.min(900, Math.round(wpm))));
-        }}
-        onBionicChange={setCosmicBionic}
-        onPaletteChange={handleCosmicPaletteChange}
-        onWordSizeChange={handleCosmicWordSizeChange}
-        onBaseWeightChange={handleCosmicBaseWeightChange}
-        onFocusWeightChange={handleCosmicFocusWeightChange}
-        onFixationChange={handleCosmicFixationChange}
-        onMinWordLengthChange={handleCosmicMinWordLengthChange}
-        renderWord={renderCosmicWord}
-      />
+      {cosmicOpen ? (
+        <Suspense fallback={null}>
+          <CosmicFocusOverlay
+            open={cosmicOpen}
+            words={cosmicWords}
+            currentIndex={cosmicIndex}
+            isPlaying={cosmicPlaying}
+            wpm={cosmicWpm}
+            bionicEnabled={cosmicBionic}
+            palette={cosmicPalette}
+            wordSize={cosmicWordSize}
+            baseWeight={cosmicBaseWeight}
+            focusWeight={cosmicFocusWeight}
+            fixation={cosmicFixation}
+            minWordLength={cosmicMinWordLength}
+            onClose={() => {
+              setCosmicOpen(false);
+              setCosmicPlaying(false);
+            }}
+            onTogglePlay={() => {
+              if (cosmicWords.length === 0) {
+                return;
+              }
+              setCosmicPlaying((current) => !current);
+            }}
+            onReset={() => {
+              setCosmicIndex(0);
+              setCosmicPlaying(false);
+            }}
+            onSeek={(index) => {
+              setCosmicIndex(index);
+            }}
+            onWpmChange={(wpm) => {
+              setCosmicWpm(Math.max(120, Math.min(900, Math.round(wpm))));
+            }}
+            onBionicChange={setCosmicBionic}
+            onPaletteChange={handleCosmicPaletteChange}
+            onWordSizeChange={handleCosmicWordSizeChange}
+            onBaseWeightChange={handleCosmicBaseWeightChange}
+            onFocusWeightChange={handleCosmicFocusWeightChange}
+            onFixationChange={handleCosmicFixationChange}
+            onMinWordLengthChange={handleCosmicMinWordLengthChange}
+            renderWord={renderCosmicWord}
+          />
+        </Suspense>
+      ) : null}
 
       <CommandPalette
         open={commandPaletteOpen}
@@ -1802,36 +1848,52 @@ export default function App() {
         onClose={() => setCommandPaletteOpen(false)}
       />
 
-      <ExportModal
-        open={exportOpen}
-        onClose={() => setExportOpen(false)}
-        onSelect={(profile) => {
-          void handleExportSelect(profile);
-        }}
-      />
+      {exportOpen ? (
+        <Suspense fallback={null}>
+          <ExportModal
+            open={exportOpen}
+            onClose={() => setExportOpen(false)}
+            onSelect={(profile) => {
+              void handleExportSelect(profile);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
-      <HistoryModal
-        open={historyOpen}
-        snapshots={snapshots}
-        loading={historyLoading}
-        onClose={() => setHistoryOpen(false)}
-        onRestore={(snapshotId) => {
-          void restoreSnapshot(snapshotId);
-        }}
-      />
+      {historyOpen ? (
+        <Suspense fallback={null}>
+          <HistoryModal
+            open={historyOpen}
+            snapshots={snapshots}
+            loading={historyLoading}
+            onClose={() => setHistoryOpen(false)}
+            onRestore={(snapshotId) => {
+              void restoreSnapshot(snapshotId);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
-      <UserGuideModal open={userGuideOpen} onClose={() => setUserGuideOpen(false)} />
+      {userGuideOpen ? (
+        <Suspense fallback={null}>
+          <UserGuideModal open={userGuideOpen} onClose={() => setUserGuideOpen(false)} />
+        </Suspense>
+      ) : null}
 
-      <LinkValidationModal
-        open={validationOpen}
-        issues={validationIssues}
-        checkedExternal={validationCheckedExternal}
-        onClose={() => setValidationOpen(false)}
-        onJumpToLine={(line) => {
-          setValidationOpen(false);
-          setTargetCursorLine(Math.max(1, Math.round(line)));
-        }}
-      />
+      {validationOpen ? (
+        <Suspense fallback={null}>
+          <LinkValidationModal
+            open={validationOpen}
+            issues={validationIssues}
+            checkedExternal={validationCheckedExternal}
+            onClose={() => setValidationOpen(false)}
+            onJumpToLine={(line) => {
+              setValidationOpen(false);
+              setTargetCursorLine(Math.max(1, Math.round(line)));
+            }}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

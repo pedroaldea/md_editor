@@ -7,6 +7,7 @@ interface PreviewPaneProps {
   targetScrollRatio: number | null;
   onScrollRatioChange: (ratio: number) => void;
   onExternalLink: (href: string) => void;
+  onLocalLink: (href: string) => void;
   ultraReadEnabled: boolean;
 }
 
@@ -16,6 +17,7 @@ export default function PreviewPane({
   targetScrollRatio,
   onScrollRatioChange,
   onExternalLink,
+  onLocalLink,
   ultraReadEnabled
 }: PreviewPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -90,7 +92,41 @@ export default function PreviewPane({
     if (href.startsWith("http://") || href.startsWith("https://")) {
       event.preventDefault();
       onExternalLink(href);
+      return;
     }
+
+    if (href.startsWith("#")) {
+      event.preventDefault();
+      const anchorId = href.slice(1).trim();
+      if (!anchorId) {
+        return;
+      }
+      const container = containerRef.current;
+      if (!container) {
+        return;
+      }
+      let decodedAnchorId = anchorId;
+      try {
+        decodedAnchorId = decodeURIComponent(anchorId);
+      } catch {
+        // Keep raw id when decoding fails.
+      }
+      const anchorTarget = container.ownerDocument.getElementById(decodedAnchorId);
+      if (anchorTarget && container.contains(anchorTarget)) {
+        anchorTarget.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest"
+        });
+      }
+      return;
+    }
+
+    if (/^[a-z][a-z\d+\-.]*:/iu.test(href)) {
+      return;
+    }
+
+    event.preventDefault();
+    onLocalLink(href);
   };
 
   return (

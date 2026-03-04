@@ -289,13 +289,13 @@ fn append_log(action: &str, details: &str) {
     let _ = file.write_all(message.as_bytes());
 }
 
-fn is_markdown_file(path: &Path) -> bool {
+fn is_workspace_text_file(path: &Path) -> bool {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    extension == "md" || extension == "markdown"
+    matches!(extension.as_str(), "md" | "markdown" | "txt")
 }
 
 fn is_text_openable_file(path: &Path) -> bool {
@@ -327,25 +327,42 @@ fn should_skip_dir(path: &Path) -> bool {
     name.starts_with('.') || name == "node_modules" || name == "target"
 }
 
-fn collect_markdown_files(
+fn collect_workspace_text_files(
     root: &Path,
     current: &Path,
     files: &mut Vec<MarkdownFileEntry>,
+    visited_dirs: &mut HashSet<PathBuf>,
 ) -> Result<(), AppError> {
+    let canonical_current = fs::canonicalize(current).map_err(|error| map_io_error(&error))?;
+    if !visited_dirs.insert(canonical_current) {
+        return Ok(());
+    }
+
     let entries = fs::read_dir(current).map_err(|error| map_io_error(&error))?;
     for entry_result in entries {
         let entry = entry_result.map_err(|error| map_io_error(&error))?;
         let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| map_io_error(&error))?;
+
+        if file_type.is_symlink() {
+            let metadata = match fs::metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
+                continue;
+            }
+        }
 
         if path.is_dir() {
             if should_skip_dir(&path) {
                 continue;
             }
-            collect_markdown_files(root, &path, files)?;
+            collect_workspace_text_files(root, &path, files, visited_dirs)?;
             continue;
         }
 
-        if !path.is_file() || !is_markdown_file(&path) {
+        if !path.is_file() || !is_workspace_text_file(&path) {
             continue;
         }
 
@@ -820,7 +837,8 @@ pub fn list_markdown_files(directory: String) -> Result<Vec<MarkdownFileEntry>, 
     }
 
     let mut files = Vec::new();
-    collect_markdown_files(&folder_path, &folder_path, &mut files)?;
+    let mut visited_dirs = HashSet::new();
+    collect_workspace_text_files(&folder_path, &folder_path, &mut files, &mut visited_dirs)?;
     files.sort_by_key(|entry| entry.relative_path.to_lowercase());
 
     append_log("list_markdown_files", &format!("{} files", files.len()));
@@ -854,7 +872,8 @@ pub fn search_workspace(
     let max_results = limit.unwrap_or(200).max(1) as usize;
 
     let mut files = Vec::new();
-    collect_markdown_files(&folder_path, &folder_path, &mut files)?;
+    let mut visited_dirs = HashSet::new();
+    collect_workspace_text_files(&folder_path, &folder_path, &mut files, &mut visited_dirs)?;
 
     let mut hits = Vec::new();
     for entry in files {
@@ -1221,6 +1240,10 @@ pub fn export_logs(destination_path: String) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs as unix_fs;
+    #[cfg(windows)]
+    use std::os::windows::fs as windows_fs;
     use std::thread::sleep;
     use tempfile::tempdir;
 
@@ -1270,24 +1293,60 @@ mod tests {
     }
 
     #[test]
-    fn lists_markdown_files_in_folder() {
+    fn lists_workspace_text_files_in_folder() {
         let temp_dir = tempdir().expect("temp dir");
         let folder = temp_dir.path();
 
         let root_file = folder.join("README.md");
         let nested_dir = folder.join("docs");
         let nested_file = nested_dir.join("guide.markdown");
-        let ignored = folder.join("notes.txt");
+        let note_file = folder.join("notes.txt");
 
         fs::create_dir_all(&nested_dir).expect("create nested dir");
         fs::write(root_file, "root").expect("write root");
         fs::write(nested_file, "nested").expect("write nested");
-        fs::write(ignored, "ignored").expect("write ignored");
+        fs::write(note_file, "note").expect("write note");
 
         let files = list_markdown_files(folder.to_string_lossy().to_string()).expect("list files");
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
         assert!(files.iter().any(|file| file.relative_path == "README.md"));
         assert!(files.iter().any(|file| file.relative_path == "docs/guide.markdown"));
+        assert!(files.iter().any(|file| file.relative_path == "notes.txt"));
+    }
+
+    #[test]
+    fn list_workspace_files_skips_symlinked_dir_cycles() {
+        let temp_dir = tempdir().expect("temp dir");
+        let folder = temp_dir.path();
+        let docs_dir = folder.join("docs");
+        let loop_link = docs_dir.join("loop");
+        let nested_file = docs_dir.join("nested.md");
+
+        fs::create_dir_all(&docs_dir).expect("create docs");
+        fs::write(&nested_file, "nested").expect("write nested");
+
+        #[cfg(unix)]
+        {
+            if let Err(error) = unix_fs::symlink(folder, &loop_link) {
+                if error.kind() == ErrorKind::PermissionDenied {
+                    return;
+                }
+                panic!("symlink: {error:?}");
+            }
+        }
+        #[cfg(windows)]
+        {
+            if let Err(error) = windows_fs::symlink_dir(folder, &loop_link) {
+                if error.kind() == ErrorKind::PermissionDenied {
+                    return;
+                }
+                panic!("symlink: {error:?}");
+            }
+        }
+
+        let files = list_markdown_files(folder.to_string_lossy().to_string()).expect("list files");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative_path, "docs/nested.md");
     }
 
     #[test]
@@ -1297,16 +1356,17 @@ mod tests {
 
         fs::write(folder.join("a.md"), "hello world\nalpha beta").expect("write a");
         fs::write(folder.join("b.md"), "another file").expect("write b");
+        fs::write(folder.join("c.txt"), "hello gamma").expect("write c");
 
         let hits = search_workspace(
             folder.to_string_lossy().to_string(),
-            "hello alpha".to_string(),
+            "hello gamma".to_string(),
             None,
         )
         .expect("search");
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].name, "a.md");
+        assert_eq!(hits[0].name, "c.txt");
     }
 
     #[test]

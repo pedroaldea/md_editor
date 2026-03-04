@@ -39,9 +39,9 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
             <ul>
               <li>Left side is the editor, right side is the live preview.</li>
               <li>Type `/` in the editor to open quick markdown formatting commands.</li>
-              <li>Use `Read` for a cleaner reading view.</li>
+              <li>Use `Reading` for a cleaner reading view.</li>
               <li>Use `Focus` to hide extra UI and concentrate on writing.</li>
-              <li>Use `Ultra` + `Reader` settings to tune reading comfort.</li>
+              <li>Use `Bionic` + `Reading Settings` to tune reading comfort.</li>
             </ul>
           </section>
 
@@ -63,7 +63,7 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
             <ul>
               <li>`Check Links`: finds broken links in your document.</li>
               <li>`Format Tables`: cleans and aligns markdown tables.</li>
-              <li>`Cosmic Focus`: distraction-free word-by-word reading mode.</li>
+              <li>`Speed Reader`: distraction-free word-by-word reading mode.</li>
               <li>`Save As`: save a copy with a new file name.</li>
             </ul>
           </section>

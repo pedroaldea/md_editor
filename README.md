@@ -6,7 +6,7 @@ Simple, lightweight, local-first Markdown viewer/editor for macOS with live prev
 
 - Three readability palettes: `Void Black`, `Paper Light`, `Mist Contrast`
 - `Ultra Read` preview mode with configurable bionic-reading settings
-- Folder workspace sidebar for switching across multiple Markdown files
+- Folder workspace sidebar for switching across Markdown and text files
 - `Cosmic Focus` mode with palette selection, WPM, word size, boldness controls, and seek preview
 - Autosave + Save As workflow with conflict-safe file writes
 

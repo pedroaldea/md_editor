@@ -73,8 +73,10 @@ describe("TopBar", () => {
       expect(text).toContain("Check Links");
       expect(text).toContain("Format Tables");
       expect(text).toContain("User Guide");
-      expect(text).toContain("Reader");
+      expect(text).toContain("Reading Settings");
       expect(text).toContain("Hide Files");
+      expect(text).toContain("Bionic");
+      expect(text).toContain("Reading");
       expect(text).toContain("Cmd+K");
     } finally {
       unmount();

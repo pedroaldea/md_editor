@@ -121,12 +121,12 @@ export default function TopBar({
       </div>
 
       <div className="top-cluster read-controls" aria-label="Reading controls">
-        <label className="control-select" title="Reader palette">
+        <label className="control-select" title="Reading palette">
           <span>Palette</span>
           <select
             value={readerPalette}
             onChange={(event) => onReaderPaletteChange(event.target.value as ReaderPalette)}
-            aria-label="Reader palette"
+            aria-label="Reading palette"
           >
             <option value="void">Void</option>
             <option value="paper">Paper</option>
@@ -137,9 +137,9 @@ export default function TopBar({
           type="button"
           className={readMode ? "is-active" : ""}
           onClick={onToggleReadMode}
-          title="Toggle read mode"
+          title="Toggle reading mode"
         >
-          Read
+          Reading
         </button>
         <button
           type="button"
@@ -153,12 +153,12 @@ export default function TopBar({
           type="button"
           className={ultraRead.enabled ? "is-active" : ""}
           onClick={() => onUltraReadEnabledChange(!ultraRead.enabled)}
-          title="Toggle Ultra Read"
+          title="Toggle Bionic reading"
         >
-          Ultra
+          Bionic
         </button>
-        <details className="toolbar-menu" title="Reader settings">
-          <summary>Reader</summary>
+        <details className="toolbar-menu" title="Reading settings">
+          <summary>Reading Settings</summary>
           <div className="toolbar-menu-list reader-menu-list">
             <label className="control-slider" title={`Focus ${Math.round(ultraRead.fixation * 100)}%`}>
               <span>Focus</span>
@@ -169,7 +169,7 @@ export default function TopBar({
                 step={5}
                 value={Math.round(ultraRead.fixation * 100)}
                 onChange={(event) => onUltraReadFixationChange(Number(event.target.value) / 100)}
-                aria-label="Ultra read focus"
+                aria-label="Bionic focus"
                 disabled={!ultraRead.enabled}
               />
             </label>
@@ -182,7 +182,7 @@ export default function TopBar({
                 step={1}
                 value={ultraRead.minWordLength}
                 onChange={(event) => onUltraReadMinWordLengthChange(Number(event.target.value))}
-                aria-label="Ultra read minimum word length"
+                aria-label="Bionic minimum word length"
                 disabled={!ultraRead.enabled}
               />
             </label>
@@ -198,7 +198,7 @@ export default function TopBar({
                 step={10}
                 value={Math.round(ultraRead.focusWeight)}
                 onChange={(event) => onUltraReadFocusWeightChange(Number(event.target.value))}
-                aria-label="Ultra read bionic boldness"
+                aria-label="Bionic boldness"
                 disabled={!ultraRead.enabled}
               />
             </label>
@@ -262,15 +262,15 @@ export default function TopBar({
             >
               Format Tables
             </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onToggleCosmic();
-              }}
-            >
-              {cosmicOpen ? "Close Cosmic Focus" : "Open Cosmic Focus"}
-            </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  closeDetailsMenu(event);
+                  onToggleCosmic();
+                }}
+              >
+              {cosmicOpen ? "Close Speed Reader" : "Open Speed Reader"}
+              </button>
           </div>
         </details>
       </div>

@@ -48,6 +48,22 @@ describe("getBlockIndexForLine", () => {
     expect(getBlockIndexForLine(input, 3)).toBe(1);
     expect(getBlockIndexForLine(input, 5)).toBe(2);
   });
+
+  it("maps heading and paragraph blocks without blank lines", () => {
+    const input = ["# One", "Paragraph", "- item", "- item 2", "", "> Quote line"].join("\n");
+    expect(getBlockIndexForLine(input, 1)).toBe(0);
+    expect(getBlockIndexForLine(input, 2)).toBe(1);
+    expect(getBlockIndexForLine(input, 3)).toBe(2);
+    expect(getBlockIndexForLine(input, 4)).toBe(2);
+    expect(getBlockIndexForLine(input, 6)).toBe(3);
+  });
+
+  it("keeps blockquote lines mapped to their block", () => {
+    const input = ["> Line one", ">", "> Line two", "", "Paragraph"].join("\n");
+    expect(getBlockIndexForLine(input, 1)).toBe(0);
+    expect(getBlockIndexForLine(input, 3)).toBe(0);
+    expect(getBlockIndexForLine(input, 5)).toBe(1);
+  });
 });
 
 describe("applyBionicReading", () => {

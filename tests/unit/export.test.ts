@@ -8,7 +8,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock
 }));
 
-import { PDF_EXPORT_CLASS, runPdfPrint } from "../../src/lib/export";
+import {
+  buildHtmlExportDocument,
+  escapeHtmlText,
+  PDF_EXPORT_CLASS,
+  runPdfPrint
+} from "../../src/lib/export";
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };
 
@@ -88,5 +93,15 @@ describe("runPdfPrint", () => {
     expect(print).toHaveBeenCalledTimes(1);
     expect(invokeMock).not.toHaveBeenCalled();
     expect(root.classList.contains(PDF_EXPORT_CLASS)).toBe(false);
+  });
+});
+
+describe("buildHtmlExportDocument", () => {
+  it("escapes unsafe title text", () => {
+    const title = `A <script>alert("x")</script> & "quotes"`;
+    const html = buildHtmlExportDocument(title, "<p>Body</p>");
+
+    expect(html).toContain(`<title>${escapeHtmlText(title)}</title>`);
+    expect(html).not.toContain("<title>A <script>");
   });
 });

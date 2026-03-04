@@ -73,10 +73,10 @@ export default function FileSidebar({
       </div>
 
       <div className="file-sidebar-list">
-        {!folderPath ? <p className="file-sidebar-empty">Open a folder to browse Markdown files.</p> : null}
+        {!folderPath ? <p className="file-sidebar-empty">Open a folder to browse Markdown and text files.</p> : null}
         {folderPath && loading ? <p className="file-sidebar-empty">Loading files...</p> : null}
         {folderPath && !loading && files.length === 0 ? (
-          <p className="file-sidebar-empty">No `.md` or `.markdown` files found.</p>
+          <p className="file-sidebar-empty">No `.md`, `.markdown`, or `.txt` files found.</p>
         ) : null}
         {!loading &&
           files.map((file) => (

@@ -88,3 +88,14 @@ test("does not trigger slash menu while typing URLs", async ({ page }) => {
   await page.keyboard.type("https://example.com");
   await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeHidden();
 });
+
+test("keeps app context when local preview links are clicked", async ({ page }) => {
+  await page.goto("/");
+  await focusEditor(page);
+
+  await page.keyboard.type("[Open local](./notes.md)");
+  const currentUrl = page.url();
+  await page.locator(".preview-pane a").click();
+
+  await expect.poll(() => page.url()).toBe(currentUrl);
+});

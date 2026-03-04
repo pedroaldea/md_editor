@@ -90,7 +90,7 @@ export default function CosmicFocusOverlay({
       className="cosmic-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Cosmic Focus Mode"
+      aria-label="Speed Reader Mode"
       data-cosmic-palette={palette}
       style={
         {
@@ -102,7 +102,7 @@ export default function CosmicFocusOverlay({
     >
       <aside className="cosmic-side">
         <div className="cosmic-side-top">
-          <h2>Cosmic Focus</h2>
+          <h2>Speed Reader</h2>
           <button type="button" onClick={onClose}>
             Close
           </button>

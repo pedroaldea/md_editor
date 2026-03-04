@@ -30,6 +30,16 @@ const FOOTNOTE_DEFINITION_PATTERN = /^\[\^([^\]]+)\]:\s*(.*)$/u;
 const FOOTNOTE_REFERENCE_PATTERN = /\[\^([^\]]+)\]/gu;
 const CHECKLIST_PATTERN = /^\s*(?:[-*+]|\d+\.)\s+\[([ xX])\]\s+/u;
 const FOOTNOTE_REF_TOKEN_PREFIX = "@@FOOTNOTE_REF:";
+const BLOCK_TOKEN_TYPES = new Set([
+  "heading",
+  "paragraph",
+  "code",
+  "blockquote",
+  "list",
+  "table",
+  "hr",
+  "html"
+]);
 
 const normalizeFootnoteId = (value: string): string =>
   value.toLowerCase().trim().replace(/[^a-z0-9_-]+/gu, "-");
@@ -220,27 +230,43 @@ export const getChecklistProgress = (markdown: string): ChecklistProgress => {
 };
 
 export const getBlockIndexForLine = (markdown: string, lineNumber: number): number => {
-  if (lineNumber <= 1) {
+  if (lineNumber <= 1 || markdown.length === 0) {
     return 0;
   }
 
-  const lines = markdown.split(/\r?\n/u);
-  const finalLine = Math.min(lineNumber - 1, lines.length - 1);
-  let blockIndex = -1;
-  let inBlock = false;
+  const totalLines = markdown.split(/\r?\n/u).length;
+  const safeLine = Math.min(Math.max(1, Math.round(lineNumber)), totalLines);
+  const tokens = marked.lexer(markdown);
 
-  for (let i = 0; i <= finalLine; i += 1) {
-    const isBlank = lines[i].trim().length === 0;
-    if (!isBlank && !inBlock) {
-      blockIndex += 1;
-      inBlock = true;
+  const blockStarts: Array<{ line: number; index: number }> = [];
+  let lineCursor = 1;
+
+  for (const token of tokens as Array<{ type: string; raw?: string }>) {
+    if (BLOCK_TOKEN_TYPES.has(token.type)) {
+      blockStarts.push({
+        line: lineCursor,
+        index: blockStarts.length
+      });
     }
-    if (isBlank) {
-      inBlock = false;
-    }
+
+    const raw = token.raw ?? "";
+    const newlines = (raw.match(/\r?\n/gu) ?? []).length;
+    lineCursor += newlines;
   }
 
-  return Math.max(blockIndex, 0);
+  if (blockStarts.length === 0) {
+    return 0;
+  }
+
+  let active = 0;
+  for (const entry of blockStarts) {
+    if (entry.line > safeLine) {
+      break;
+    }
+    active = entry.index;
+  }
+
+  return active;
 };
 
 const clamp = (value: number, min: number, max: number): number =>
