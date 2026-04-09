@@ -134,8 +134,7 @@ export default function PreviewPane({
       className={`preview-pane${ultraReadEnabled ? " ultra-read" : ""}`}
       ref={containerRef}
       onClick={handleClick}
-    >
-      <article className="preview-document" dangerouslySetInnerHTML={{ __html: html }} />
-    </div>
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }

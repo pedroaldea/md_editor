@@ -1,14 +1,14 @@
 import type { MouseEvent } from "react";
-import type { AppError, EditorViewMode, ReaderPalette, UltraReadConfig } from "../types/app";
+import type { AppError, ReaderPalette, UltraReadConfig } from "../types/app";
 
 interface TopBarProps {
   path: string | null;
   dirty: boolean;
   status: string;
   error: AppError | null;
-  viewMode: EditorViewMode;
   readerPalette: ReaderPalette;
   ultraRead: UltraReadConfig;
+  readMode: boolean;
   focusMode: boolean;
   checklistLabel: string | null;
   cosmicOpen: boolean;
@@ -19,14 +19,13 @@ interface TopBarProps {
   onOpenFolder: () => void;
   onSave: () => void;
   onSaveAs: () => void;
-  onInsertImage: () => void;
   onOpenCommandPalette: () => void;
   onOpenExport: () => void;
   onOpenHistory: () => void;
   onOpenUserGuide: () => void;
   onValidateLinks: () => void;
   onFormatTables: () => void;
-  onViewModeChange: (viewMode: EditorViewMode) => void;
+  onToggleReadMode: () => void;
   onToggleFocusMode: () => void;
   onToggleCosmic: () => void;
   onReaderPaletteChange: (palette: ReaderPalette) => void;
@@ -57,9 +56,9 @@ export default function TopBar({
   dirty,
   status,
   error,
-  viewMode,
   readerPalette,
   ultraRead,
+  readMode,
   focusMode,
   checklistLabel,
   cosmicOpen,
@@ -70,14 +69,13 @@ export default function TopBar({
   onOpenFolder,
   onSave,
   onSaveAs,
-  onInsertImage,
   onOpenCommandPalette,
   onOpenExport,
   onOpenHistory,
   onOpenUserGuide,
   onValidateLinks,
   onFormatTables,
-  onViewModeChange,
+  onToggleReadMode,
   onToggleFocusMode,
   onToggleCosmic,
   onReaderPaletteChange,
@@ -89,15 +87,12 @@ export default function TopBar({
 }: TopBarProps) {
   return (
     <header className="top-bar">
-      <div className="top-identity">
-        <div className="top-left">
-          <h1>Md Editor</h1>
-          <p>
-            {getDocumentName(path)}
-            {dirty ? " • Unsaved" : ""}
-          </p>
-        </div>
-        {checklistLabel ? <span className="checklist-chip">{checklistLabel}</span> : null}
+      <div className="top-left">
+        <h1>Md Editor</h1>
+        <p>
+          {getDocumentName(path)}
+          {dirty ? " • Unsaved" : ""}
+        </p>
       </div>
 
       <div className="top-cluster top-actions" aria-label="Document actions">
@@ -110,9 +105,6 @@ export default function TopBar({
         <button type="button" onClick={onSave} title="Save">
           Save
         </button>
-        <button type="button" onClick={onOpenFolder} title="Open folder">
-          Folder
-        </button>
         {sidebarAvailable ? (
           <button
             type="button"
@@ -123,79 +115,51 @@ export default function TopBar({
             {sidebarCollapsed ? "Files" : "Hide Files"}
           </button>
         ) : null}
+        <button type="button" onClick={onOpenCommandPalette} title="Command palette">
+          Cmd+K
+        </button>
       </div>
 
-      <div className="top-cluster top-view" aria-label="View controls">
-        <span className="cluster-label">View</span>
-        <div className="segmented-control" aria-label="Editor views">
-          <button
-            type="button"
-            className={viewMode === "edit" ? "is-active" : ""}
-            onClick={() => onViewModeChange("edit")}
+      <div className="top-cluster read-controls" aria-label="Reading controls">
+        <label className="control-select" title="Reading palette">
+          <span>Palette</span>
+          <select
+            value={readerPalette}
+            onChange={(event) => onReaderPaletteChange(event.target.value as ReaderPalette)}
+            aria-label="Reading palette"
           >
-            Edit
-          </button>
-          <button
-            type="button"
-            className={viewMode === "split" ? "is-active" : ""}
-            onClick={() => onViewModeChange("split")}
-          >
-            Split
-          </button>
-          <button
-            type="button"
-            className={viewMode === "read" ? "is-active" : ""}
-            onClick={() => onViewModeChange("read")}
-          >
-            Read
-          </button>
-        </div>
+            <option value="void">Void</option>
+            <option value="paper">Paper</option>
+            <option value="mist">Mist</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className={readMode ? "is-active" : ""}
+          onClick={onToggleReadMode}
+          title="Toggle reading mode"
+        >
+          Reading
+        </button>
         <button
           type="button"
           className={focusMode ? "is-active" : ""}
           onClick={onToggleFocusMode}
-          title="Hide chrome and keep the current view"
+          title="Toggle writer focus mode"
         >
           Focus
         </button>
-      </div>
-
-      <div className="top-cluster top-utilities" aria-label="Utilities">
-        <span className="cluster-label">Tools</span>
-        <button type="button" onClick={onInsertImage} title="Insert image">
-          Image
+        <button
+          type="button"
+          className={ultraRead.enabled ? "is-active" : ""}
+          onClick={() => onUltraReadEnabledChange(!ultraRead.enabled)}
+          title="Toggle Bionic reading"
+        >
+          Bionic
         </button>
-        <button type="button" onClick={onOpenExport} title="Export document">
-          Export
-        </button>
-        <button type="button" onClick={onOpenHistory} title="Version history">
-          History
-        </button>
-        <button type="button" onClick={onOpenCommandPalette} title="Command palette">
-          Cmd+K
-        </button>
-        <details className="toolbar-menu" title="Reading tools">
-          <summary>Reading</summary>
+        <details className="toolbar-menu" title="Reading settings">
+          <summary>Reading Settings</summary>
           <div className="toolbar-menu-list reader-menu-list">
-            <label className="control-select" title="Reading palette">
-              <span>Palette</span>
-              <select
-                value={readerPalette}
-                onChange={(event) => onReaderPaletteChange(event.target.value as ReaderPalette)}
-                aria-label="Reading palette"
-              >
-                <option value="void">Void</option>
-                <option value="paper">Paper</option>
-                <option value="mist">Mist</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              className={ultraRead.enabled ? "is-active" : ""}
-              onClick={() => onUltraReadEnabledChange(!ultraRead.enabled)}
-            >
-              {ultraRead.enabled ? "Disable Bionic" : "Enable Bionic"}
-            </button>
             <label className="control-slider" title={`Focus ${Math.round(ultraRead.fixation * 100)}%`}>
               <span>Focus</span>
               <input
@@ -222,7 +186,10 @@ export default function TopBar({
                 disabled={!ultraRead.enabled}
               />
             </label>
-            <label className="control-slider" title={`Bionic weight ${Math.round(ultraRead.focusWeight)}`}>
+            <label
+              className="control-slider"
+              title={`Bionic weight ${Math.round(ultraRead.focusWeight)}`}
+            >
               <span>Bold</span>
               <input
                 type="range"
@@ -237,9 +204,28 @@ export default function TopBar({
             </label>
           </div>
         </details>
+        {checklistLabel ? <span className="checklist-chip">{checklistLabel}</span> : null}
+      </div>
+
+      <div className="top-cluster top-utilities" aria-label="Utilities">
+        <button type="button" onClick={onOpenExport} title="Export document">
+          Export
+        </button>
+        <button type="button" onClick={onOpenHistory} title="Version history">
+          History
+        </button>
         <details className="toolbar-menu" title="More tools">
           <summary>More</summary>
           <div className="toolbar-menu-list">
+            <button
+              type="button"
+              onClick={(event) => {
+                closeDetailsMenu(event);
+                onOpenUserGuide();
+              }}
+            >
+              User Guide
+            </button>
             <button
               type="button"
               onClick={(event) => {
@@ -248,6 +234,15 @@ export default function TopBar({
               }}
             >
               Save As
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                closeDetailsMenu(event);
+                onOpenFolder();
+              }}
+            >
+              Open Folder
             </button>
             <button
               type="button"
@@ -267,29 +262,20 @@ export default function TopBar({
             >
               Format Tables
             </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onOpenUserGuide();
-              }}
-            >
-              User Guide
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onToggleCosmic();
-              }}
-            >
+              <button
+                type="button"
+                onClick={(event) => {
+                  closeDetailsMenu(event);
+                  onToggleCosmic();
+                }}
+              >
               {cosmicOpen ? "Close Speed Reader" : "Open Speed Reader"}
-            </button>
+              </button>
           </div>
         </details>
       </div>
 
-      <div className={`top-status${error ? " is-error" : ""}`} aria-live="polite">
+      <div className="top-status" aria-live="polite">
         <span>{error ? `Error: ${error.code}` : status}</span>
       </div>
     </header>

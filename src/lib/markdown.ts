@@ -3,7 +3,6 @@ import hljs from "highlight.js";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import type { UltraReadConfig } from "../types/app";
-import { hasProtocolPrefix, resolveRelativePath } from "./paths";
 
 export interface RenderedMarkdown {
   html: string;
@@ -21,11 +20,6 @@ export interface ChecklistProgress {
   total: number;
   completed: number;
   percent: number;
-}
-
-interface AssetResolutionOptions {
-  documentPath: string | null;
-  toAssetUrl: (path: string) => string;
 }
 
 const BLOCK_SELECTOR =
@@ -182,34 +176,6 @@ export const renderMarkdown = (markdown: string): RenderedMarkdown => {
     html: doc.body.innerHTML,
     blockCount: blocks.length
   };
-};
-
-export const resolveMarkdownAssetUrls = (
-  html: string,
-  { documentPath, toAssetUrl }: AssetResolutionOptions
-): string => {
-  if (!documentPath || html.trim().length === 0) {
-    return html;
-  }
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  const images = Array.from(doc.body.querySelectorAll<HTMLImageElement>("img[src]"));
-
-  let changed = false;
-  for (const image of images) {
-    const source = image.getAttribute("src")?.trim() ?? "";
-    if (!source || source.startsWith("#") || source.startsWith("data:") || hasProtocolPrefix(source)) {
-      continue;
-    }
-
-    const absolutePath = resolveRelativePath(documentPath, source);
-    image.setAttribute("src", toAssetUrl(absolutePath));
-    image.setAttribute("data-local-src", absolutePath);
-    changed = true;
-  }
-
-  return changed ? doc.body.innerHTML : html;
 };
 
 export const extractHeadings = (markdown: string): HeadingEntry[] => {

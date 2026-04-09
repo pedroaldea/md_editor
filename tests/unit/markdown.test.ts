@@ -4,8 +4,7 @@ import {
   extractHeadings,
   getBlockIndexForLine,
   getChecklistProgress,
-  renderMarkdown,
-  resolveMarkdownAssetUrls
+  renderMarkdown
 } from "../../src/lib/markdown";
 
 describe("renderMarkdown", () => {
@@ -92,30 +91,6 @@ describe("applyBionicReading", () => {
 
     expect(transformed).not.toContain("bionic-focus");
     expect(transformed).toContain("const value = 42;");
-  });
-});
-
-describe("resolveMarkdownAssetUrls", () => {
-  it("rewrites local image sources against the current document path", () => {
-    const html = '<p><img src="./assets/chart.png" alt="Chart" /></p>';
-    const resolved = resolveMarkdownAssetUrls(html, {
-      documentPath: "/Users/pedroaldeamas/notes/demo.md",
-      toAssetUrl: (path) => `asset://${path}`
-    });
-
-    expect(resolved).toContain('src="asset:///Users/pedroaldeamas/notes/assets/chart.png"');
-    expect(resolved).toContain('data-local-src="/Users/pedroaldeamas/notes/assets/chart.png"');
-  });
-
-  it("keeps remote images untouched", () => {
-    const html = '<p><img src="https://example.com/chart.png" alt="Chart" /></p>';
-    const resolved = resolveMarkdownAssetUrls(html, {
-      documentPath: "/Users/pedroaldeamas/notes/demo.md",
-      toAssetUrl: (path) => `asset://${path}`
-    });
-
-    expect(resolved).toContain('src="https://example.com/chart.png"');
-    expect(resolved).not.toContain("data-local-src");
   });
 });
 
