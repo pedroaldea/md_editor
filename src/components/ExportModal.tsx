@@ -22,18 +22,20 @@ export default function ExportModal({ open, onClose, onSelect }: ExportModalProp
         </header>
 
         <div className="modal-content export-options">
-          <button type="button" onClick={() => onSelect("clean-markdown")}>
-            Clean Markdown (.md)
+          <button type="button" className="export-option-card" onClick={() => onSelect("clean-markdown")}>
+            <strong>Markdown</strong>
+            <span>Save a clean `.md` copy of the current document.</span>
           </button>
-          <button type="button" onClick={() => onSelect("html")}>
-            HTML (.html)
+          <button type="button" className="export-option-card" onClick={() => onSelect("html")}>
+            <strong>HTML</strong>
+            <span>Export a styled reading copy with local images resolved.</span>
           </button>
-          <button type="button" onClick={() => onSelect("pdf-print")}>
-            PDF (Print)
+          <button type="button" className="export-option-card" onClick={() => onSelect("pdf-print")}>
+            <strong>Print / PDF</strong>
+            <span>Open the print dialog and use Save as PDF if needed.</span>
           </button>
         </div>
       </div>
     </div>
   );
 }
-

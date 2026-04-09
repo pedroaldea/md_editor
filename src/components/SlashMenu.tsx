@@ -37,7 +37,7 @@ export default function SlashMenu({
             aria-selected={index === activeIndex}
             className={`slash-menu-item${index === activeIndex ? " is-active" : ""}`}
             onMouseDown={(event) => event.preventDefault()}
-            onMouseEnter={() => onHoverIndex(index)}
+            onMouseMove={() => onHoverIndex(index)}
             onClick={() => onSelect(item.id)}
           >
             <span className="slash-menu-title">{item.title}</span>

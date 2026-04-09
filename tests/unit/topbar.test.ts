@@ -16,6 +16,7 @@ const mountTopBar = () => {
         dirty: false,
         status: "Ready",
         error: null,
+        viewMode: "split",
         readerPalette: "void",
         ultraRead: {
           enabled: false,
@@ -23,7 +24,6 @@ const mountTopBar = () => {
           minWordLength: 4,
           focusWeight: 760
         },
-        readMode: false,
         focusMode: false,
         checklistLabel: "Tasks 1/2 (50%)",
         cosmicOpen: false,
@@ -34,13 +34,14 @@ const mountTopBar = () => {
         onOpenFolder: vi.fn(),
         onSave: vi.fn(),
         onSaveAs: vi.fn(),
+        onInsertImage: vi.fn(),
         onOpenCommandPalette: vi.fn(),
         onOpenExport: vi.fn(),
         onOpenHistory: vi.fn(),
         onOpenUserGuide: vi.fn(),
         onValidateLinks: vi.fn(),
         onFormatTables: vi.fn(),
-        onToggleReadMode: vi.fn(),
+        onViewModeChange: vi.fn(),
         onToggleFocusMode: vi.fn(),
         onToggleCosmic: vi.fn(),
         onReaderPaletteChange: vi.fn(),
@@ -69,14 +70,19 @@ describe("TopBar", () => {
     const { host, unmount } = mountTopBar();
     try {
       const text = host.textContent ?? "";
+      expect(text).toContain("Folder");
+      expect(text).toContain("Image");
+      expect(text).toContain("Edit");
+      expect(text).toContain("Split");
+      expect(text).toContain("Read");
+      expect(text).toContain("Focus");
       expect(text).toContain("More");
       expect(text).toContain("Check Links");
       expect(text).toContain("Format Tables");
       expect(text).toContain("User Guide");
-      expect(text).toContain("Reading Settings");
-      expect(text).toContain("Hide Files");
-      expect(text).toContain("Bionic");
       expect(text).toContain("Reading");
+      expect(text).toContain("Hide Files");
+      expect(text).toContain("Enable Bionic");
       expect(text).toContain("Cmd+K");
     } finally {
       unmount();

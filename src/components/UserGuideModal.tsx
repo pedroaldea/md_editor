@@ -30,18 +30,17 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
               <li>Use `New` to start fresh.</li>
               <li>Use `Open` to load a Markdown or text file.</li>
               <li>Use `Save` to keep your latest changes.</li>
-              <li>Use `Open Folder` from `More` to browse a workspace.</li>
+              <li>Use `Folder` to browse a workspace and `Files` to show or hide the tree.</li>
             </ul>
           </section>
 
           <section className="guide-section">
             <h3>Write and read</h3>
             <ul>
-              <li>Left side is the editor, right side is the live preview.</li>
+              <li>Use `Edit`, `Split`, and `Read` to choose the current writing view.</li>
               <li>Type `/` in the editor to open quick markdown formatting commands.</li>
-              <li>Use `Reading` for a cleaner reading view.</li>
-              <li>Use `Focus` to hide extra UI and concentrate on writing.</li>
-              <li>Use `Bionic` + `Reading Settings` to tune reading comfort.</li>
+              <li>Use `Focus` to hide the chrome while keeping the current view mode.</li>
+              <li>Open `Reading` to change the palette and bionic reading settings.</li>
             </ul>
           </section>
 
@@ -49,9 +48,9 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
             <h3>Work faster</h3>
             <ul>
               <li>Press `Cmd+K` to open the command palette and jump to actions/files/headings.</li>
-              <li>Use workspace search in the sidebar to find text across your folder.</li>
+              <li>Use the sidebar tree to expand nested folders and keep long workspaces tidy.</li>
               <li>Save or open a document first when you want to insert images.</li>
-              <li>Paste an image from your clipboard or drop an image file into the app window.</li>
+              <li>Use `Image`, paste from your clipboard, or drop an image file into the app window.</li>
               <li>The app stores the image in an `assets/` folder next to your document.</li>
               <li>The app inserts `![alt](relative/path)` markdown for the image automatically.</li>
               <li>Use `History` to restore older local versions of your file.</li>
@@ -71,8 +70,8 @@ export default function UserGuideModal({ open, onClose }: UserGuideModalProps) {
           <section className="guide-section">
             <h3>Export and sharing</h3>
             <ul>
-              <li>`Export` lets you create Markdown, HTML, or PDF (Print).</li>
-              <li>For PDF, choose `Export` → `PDF (Print)` and then `Save as PDF` in the print dialog.</li>
+              <li>`Export` lets you create Markdown, HTML, or open a print-ready PDF flow.</li>
+              <li>For PDF, choose `Export` → `Print / PDF` and then `Save as PDF` in the print dialog.</li>
             </ul>
           </section>
 

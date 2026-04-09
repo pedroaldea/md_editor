@@ -1,5 +1,6 @@
 export type ThemeMode = "system" | "light" | "dark";
 export type ReaderPalette = "void" | "paper" | "mist";
+export type EditorViewMode = "edit" | "split" | "read";
 
 export interface UltraReadConfig {
   enabled: boolean;
@@ -85,6 +86,7 @@ export interface SessionState {
   workspaceFolder: string | null;
   activePath: string | null;
   draftContent: string | null;
+  viewMode?: EditorViewMode;
   readMode: boolean;
   focusMode: boolean;
   focusPreviewOnly: boolean;

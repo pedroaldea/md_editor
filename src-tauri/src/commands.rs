@@ -108,6 +108,8 @@ pub struct SessionStateDto {
     pub workspace_folder: Option<String>,
     pub active_path: Option<String>,
     pub draft_content: Option<String>,
+    #[serde(default)]
+    pub view_mode: Option<String>,
     pub read_mode: bool,
     pub focus_mode: bool,
     pub focus_preview_only: bool,

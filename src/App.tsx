@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -18,14 +18,17 @@ import {
   getBlockIndexForLine,
   getChecklistProgress,
   renderBionicWord,
-  renderMarkdown
+  renderMarkdown,
+  resolveMarkdownAssetUrls
 } from "./lib/markdown";
+import { hasProtocolPrefix, pathToFileHref, resolveRelativePath } from "./lib/paths";
 import { bindShortcuts } from "./lib/shortcuts";
 import { formatMarkdownTables } from "./lib/tableFormatter";
 import { useDocumentStore } from "./state/documentStore";
 import type {
   AppError,
   CommandPaletteItem,
+  EditorViewMode,
   ExportProfile,
   LinkValidationIssue,
   LinkValidationReport,
@@ -42,6 +45,7 @@ import type {
 const MARKDOWN_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }];
 const LOG_FILTER = [{ name: "Log", extensions: ["log", "txt"] }];
 const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
+const IMAGE_FILTER = [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }];
 
 const CosmicFocusOverlay = lazy(() => import("./components/CosmicFocusOverlay"));
 const ExportModal = lazy(() => import("./components/ExportModal"));
@@ -90,46 +94,6 @@ const hasUnsavedChanges = (): boolean => useDocumentStore.getState().document.di
 const isPathInsideFolder = (path: string, folderPath: string): boolean =>
   path === folderPath || path.startsWith(`${folderPath}/`);
 
-const hasProtocolPrefix = (value: string): boolean => /^[a-z][a-z\d+\-.]*:/iu.test(value);
-
-const normalizeFsPath = (value: string): string => value.replace(/\\/gu, "/");
-
-const collapseSegments = (value: string): string => {
-  const normalized = normalizeFsPath(value);
-  const absolute = normalized.startsWith("/");
-  const segments = normalized.split("/");
-  const collapsed: string[] = [];
-
-  for (const segment of segments) {
-    if (!segment || segment === ".") {
-      continue;
-    }
-    if (segment === "..") {
-      if (collapsed.length > 0) {
-        collapsed.pop();
-      }
-      continue;
-    }
-    collapsed.push(segment);
-  }
-
-  if (absolute) {
-    return `/${collapsed.join("/")}`;
-  }
-  return collapsed.join("/");
-};
-
-const resolveRelativePath = (documentPath: string, linkPath: string): string => {
-  if (linkPath.startsWith("/")) {
-    return collapseSegments(linkPath);
-  }
-
-  const normalizedDocument = normalizeFsPath(documentPath);
-  const separatorIndex = normalizedDocument.lastIndexOf("/");
-  const baseDirectory = separatorIndex > 0 ? normalizedDocument.slice(0, separatorIndex) : "/";
-  return collapseSegments(`${baseDirectory}/${linkPath}`);
-};
-
 const isTextOpenablePath = (path: string): boolean => {
   const lower = path.toLowerCase();
   return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt");
@@ -147,6 +111,9 @@ const isImagePath = (path: string): boolean => {
     lower.endsWith(".svg")
   );
 };
+
+const isEditorViewMode = (value: string | null | undefined): value is EditorViewMode =>
+  value === "edit" || value === "split" || value === "read";
 
 export default function App() {
   const {
@@ -184,9 +151,8 @@ export default function App() {
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [isResizing, setIsResizing] = useState(false);
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 900px)").matches);
-  const [readMode, setReadMode] = useState(false);
+  const [viewMode, setViewMode] = useState<EditorViewMode>("split");
   const [focusMode, setFocusMode] = useState(false);
-  const [focusPreviewOnly, setFocusPreviewOnly] = useState(false);
 
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<MarkdownFileEntry[]>([]);
@@ -225,13 +191,22 @@ export default function App() {
   const layoutRef = useRef<HTMLElement | null>(null);
 
   const rendered = useMemo(() => renderMarkdown(document.content), [document.content]);
+  const previewDocumentHtml = useMemo(
+    () =>
+      resolveMarkdownAssetUrls(rendered.html, {
+        documentPath: document.path,
+        toAssetUrl: (path) => (isTauriRuntime() ? convertFileSrc(path) : pathToFileHref(path))
+      }),
+    [document.path, rendered.html]
+  );
   const previewHtml = useMemo(
-    () => applyBionicReading(rendered.html, ultraRead),
-    [rendered.html, ultraRead]
+    () => applyBionicReading(previewDocumentHtml, ultraRead),
+    [previewDocumentHtml, ultraRead]
   );
   const cosmicWords = useMemo(() => extractReadingWords(document.content), [document.content]);
   const headings = useMemo(() => extractHeadings(document.content), [document.content]);
   const checklistProgress = useMemo(() => getChecklistProgress(document.content), [document.content]);
+  const readMode = viewMode === "read";
 
   const checklistLabel =
     checklistProgress.total > 0
@@ -748,6 +723,19 @@ export default function App() {
     [ensureDocumentPathForAssets, queueInsertText, setError, setStatus]
   );
 
+  const importImageFromDialog = useCallback(async () => {
+    const selected = await openDialog({
+      multiple: false,
+      filters: IMAGE_FILTER
+    });
+
+    if (!selected || Array.isArray(selected)) {
+      return;
+    }
+
+    await insertImageFromPath(selected);
+  }, [insertImageFromPath]);
+
   const exportLogs = useCallback(async () => {
     const selected = await saveDialog({
       defaultPath: "md-editor.log",
@@ -936,7 +924,7 @@ export default function App() {
       if (profile === "pdf-print") {
         const opened = await runPdfPrint();
         if (opened) {
-          setStatus("Opened print dialog. Choose Save as PDF.");
+          setStatus("Opened print dialog. Use Print or Save as PDF.");
           setError(null);
         } else {
           setStatus("Could not open the print dialog");
@@ -983,7 +971,7 @@ export default function App() {
         }
 
         try {
-          const html = buildHtmlExportDocument(defaultBase, rendered.html);
+          const html = buildHtmlExportDocument(defaultBase, previewDocumentHtml);
           await invoke("write_text_file", {
             path: selected,
             content: html
@@ -996,7 +984,7 @@ export default function App() {
         }
       }
     },
-    [document.content, document.path, rendered.html, setError, setStatus]
+    [document.content, document.path, previewDocumentHtml, setError, setStatus]
   );
 
   const formatTables = useCallback(() => {
@@ -1056,36 +1044,40 @@ export default function App() {
         }
       },
       {
-        id: "action:read",
+        id: "action:edit-view",
         type: "action",
-        title: readMode ? "Disable reading mode" : "Enable reading mode",
-        keywords: ["reading", "read", "preview", "mode"],
-        run: () => {
-          setReadMode((current) => {
-            const next = !current;
-            if (next) {
-              setFocusMode(false);
-              setFocusPreviewOnly(false);
-            }
-            return next;
-          });
-        }
+        title: viewMode === "edit" ? "Keep edit view" : "Switch to edit view",
+        keywords: ["edit", "writer", "editor", "view"],
+        run: () => setViewMode("edit")
+      },
+      {
+        id: "action:split-view",
+        type: "action",
+        title: viewMode === "split" ? "Keep split view" : "Switch to split view",
+        keywords: ["split", "preview", "editor", "view"],
+        run: () => setViewMode("split")
+      },
+      {
+        id: "action:read-view",
+        type: "action",
+        title: viewMode === "read" ? "Keep read view" : "Switch to read view",
+        keywords: ["reading", "read", "preview", "mode", "view"],
+        run: () => setViewMode("read")
       },
       {
         id: "action:focus",
         type: "action",
         title: focusMode ? "Disable focus mode" : "Enable focus mode",
         keywords: ["focus", "writer", "mode"],
-        run: () => {
-          setFocusMode((current) => {
-            const next = !current;
-            if (next) {
-              setReadMode(false);
-              setFocusPreviewOnly(false);
-            }
-            return next;
-          });
-        }
+        run: () => setFocusMode((current) => !current)
+      },
+      {
+        id: "action:insert-image",
+        type: "action",
+        title: "Insert image",
+        subtitle: "Choose an image file and place it in assets/",
+        keywords: ["image", "insert", "asset", "graphic", "figure"],
+        run: async () => importImageFromDialog()
       },
       {
         id: "action:export",
@@ -1180,13 +1172,14 @@ export default function App() {
     formatTables,
     handleSidebarFileSelect,
     headings,
+    importImageFromDialog,
     openFolderFromDialog,
     openFromDialog,
     openHistoryModal,
-    readMode,
     runValidateLinks,
     saveDocument,
     sidebarCollapsed,
+    viewMode,
     workspaceFolder,
     workspaceLoading,
     workspaceFiles
@@ -1265,7 +1258,6 @@ export default function App() {
         return;
       }
       setFocusMode(false);
-      setFocusPreviewOnly(false);
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -1273,7 +1265,7 @@ export default function App() {
   }, [focusMode]);
 
   useEffect(() => {
-    if (!isResizing || readMode || focusMode) {
+    if (!isResizing || viewMode !== "split" || focusMode) {
       return;
     }
 
@@ -1298,7 +1290,7 @@ export default function App() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, [focusMode, isResizing, readMode]);
+  }, [focusMode, isResizing, viewMode]);
 
   useEffect(() => {
     const dispose = bindShortcuts({
@@ -1471,9 +1463,13 @@ export default function App() {
         setUltraReadMinWordLength(state.ultraReadMinWordLength);
         setUltraReadFocusWeight(state.ultraReadFocusWeight);
 
-        setReadMode(state.readMode);
+        const restoredViewMode = isEditorViewMode(state.viewMode)
+          ? state.viewMode
+          : state.readMode
+            ? "read"
+            : "split";
+        setViewMode(restoredViewMode);
         setFocusMode(state.focusMode);
-        setFocusPreviewOnly(state.focusPreviewOnly);
         setSplitRatio(Math.max(0.25, Math.min(0.75, state.splitRatio || 0.5)));
 
         setCosmicOpen(state.cosmicOpen);
@@ -1520,6 +1516,7 @@ export default function App() {
     newDocument,
     openDocumentAtPath,
     setContent,
+    setViewMode,
     setReaderPalette,
     setUltraReadEnabled,
     setUltraReadFixation,
@@ -1536,9 +1533,10 @@ export default function App() {
       workspaceFolder,
       activePath: document.path,
       draftContent: document.dirty ? document.content : null,
+      viewMode,
       readMode,
       focusMode,
-      focusPreviewOnly,
+      focusPreviewOnly: false,
       splitRatio,
       readerPalette,
       ultraReadEnabled: ultraRead.enabled,
@@ -1585,7 +1583,6 @@ export default function App() {
     document.dirty,
     document.path,
     focusMode,
-    focusPreviewOnly,
     readMode,
     readerPalette,
     splitRatio,
@@ -1593,22 +1590,24 @@ export default function App() {
     ultraRead.fixation,
     ultraRead.focusWeight,
     ultraRead.minWordLength,
+    viewMode,
     workspaceFolder
   ]);
 
   const layoutStyle = useMemo(() => {
-    if (isNarrow || readMode || focusMode) {
+    if (isNarrow || viewMode !== "split" || focusMode) {
       return undefined;
     }
     return {
       gridTemplateColumns: `${splitRatio}fr 8px ${1 - splitRatio}fr`
     };
-  }, [focusMode, isNarrow, readMode, splitRatio]);
+  }, [focusMode, isNarrow, splitRatio, viewMode]);
 
   const sidebarAvailable = (workspaceFolder !== null || workspaceLoading) && !focusMode;
   const showSidebar = sidebarAvailable && !sidebarCollapsed;
-  const showEditorPane = focusMode ? !focusPreviewOnly : !readMode;
-  const showPreviewPane = focusMode ? focusPreviewOnly : true;
+  const showEditorPane = viewMode !== "read";
+  const showPreviewPane = viewMode !== "edit";
+  const singlePaneMode = showEditorPane !== showPreviewPane;
 
   return (
     <div className={`app-shell${focusMode ? " is-focus-mode" : ""}`} data-reader-palette={readerPalette}>
@@ -1618,9 +1617,9 @@ export default function App() {
           dirty={document.dirty}
           status={status}
           error={error}
+          viewMode={viewMode}
           readerPalette={readerPalette}
           ultraRead={ultraRead}
-          readMode={readMode}
           focusMode={focusMode}
           checklistLabel={checklistLabel}
           cosmicOpen={cosmicOpen}
@@ -1657,25 +1656,12 @@ export default function App() {
             void runValidateLinks(false);
           }}
           onFormatTables={formatTables}
-          onToggleReadMode={() => {
-            setReadMode((current) => {
-              const next = !current;
-              if (next) {
-                setFocusMode(false);
-                setFocusPreviewOnly(false);
-              }
-              return next;
-            });
+          onInsertImage={() => {
+            void importImageFromDialog();
           }}
+          onViewModeChange={setViewMode}
           onToggleFocusMode={() => {
-            setFocusMode((current) => {
-              const next = !current;
-              if (next) {
-                setReadMode(false);
-                setFocusPreviewOnly(false);
-              }
-              return next;
-            });
+            setFocusMode((current) => !current);
           }}
           onToggleCosmic={toggleCosmic}
           onReaderPaletteChange={handleReaderPaletteChange}
@@ -1689,14 +1675,29 @@ export default function App() {
         />
       ) : (
         <div className="focus-floating-controls">
-          <button
-            type="button"
-            onClick={() => {
-              setFocusPreviewOnly((current) => !current);
-            }}
-          >
-            {focusPreviewOnly ? "Editor" : "Preview"}
-          </button>
+          <div className="segmented-control" aria-label="Focus view controls">
+            <button
+              type="button"
+              className={viewMode === "edit" ? "is-active" : ""}
+              onClick={() => setViewMode("edit")}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className={viewMode === "split" ? "is-active" : ""}
+              onClick={() => setViewMode("split")}
+            >
+              Split
+            </button>
+            <button
+              type="button"
+              className={viewMode === "read" ? "is-active" : ""}
+              onClick={() => setViewMode("read")}
+            >
+              Read
+            </button>
+          </div>
           <button type="button" onClick={() => setCommandPaletteOpen(true)}>
             Cmd+K
           </button>
@@ -1704,7 +1705,6 @@ export default function App() {
             type="button"
             onClick={() => {
               setFocusMode(false);
-              setFocusPreviewOnly(false);
             }}
           >
             Exit Focus
@@ -1746,7 +1746,11 @@ export default function App() {
           />
         ) : null}
 
-        <main className={`editor-layout${readMode ? " is-read-mode" : ""}`} ref={layoutRef} style={layoutStyle}>
+        <main
+          className={`editor-layout${readMode ? " is-read-mode" : ""}${singlePaneMode ? " is-single-pane" : ""}`}
+          ref={layoutRef}
+          style={layoutStyle}
+        >
           {showEditorPane ? (
             <section className="pane pane-editor">
               <EditorPane
