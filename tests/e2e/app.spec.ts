@@ -99,3 +99,54 @@ test("keeps app context when local preview links are clicked", async ({ page }) 
 
   await expect.poll(() => page.url()).toBe(currentUrl);
 });
+
+test("expands preview into a printable flow for PDF export", async ({ page }) => {
+  await page.goto("/");
+  await focusEditor(page);
+
+  const longDocument = [
+    "# Print check",
+    ...Array.from(
+      { length: 60 },
+      (_, index) =>
+        `Paragraph ${index + 1}. This is a long print validation paragraph that should force the preview to span multiple printed pages without clipping or repeating the first screenful of content.`
+    )
+  ].join("\n\n");
+
+  await page.keyboard.insertText(longDocument);
+  await page.emulateMedia({ media: "print" });
+
+  const printLayout = await page.evaluate(() => {
+    document.documentElement.classList.add("pdf-exporting");
+
+    const editor = document.querySelector<HTMLElement>(".pane-editor");
+    const preview = document.querySelector<HTMLElement>(".preview-pane");
+    const previewPane = document.querySelector<HTMLElement>(".pane-preview");
+    const workspace = document.querySelector<HTMLElement>(".workspace-shell");
+
+    if (!editor || !preview || !previewPane || !workspace) {
+      return null;
+    }
+
+    const editorStyle = getComputedStyle(editor);
+    const previewStyle = getComputedStyle(preview);
+    const paneStyle = getComputedStyle(previewPane);
+    const workspaceStyle = getComputedStyle(workspace);
+
+    return {
+      editorDisplay: editorStyle.display,
+      previewOverflow: previewStyle.overflow,
+      previewMaxHeight: previewStyle.maxHeight,
+      paneOverflow: paneStyle.overflow,
+      workspaceDisplay: workspaceStyle.display
+    };
+  });
+
+  expect(printLayout).toEqual({
+    editorDisplay: "none",
+    previewOverflow: "visible",
+    previewMaxHeight: "none",
+    paneOverflow: "visible",
+    workspaceDisplay: "block"
+  });
+});

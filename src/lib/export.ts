@@ -6,6 +6,18 @@ const isTauriRuntime = (): boolean =>
   typeof window !== "undefined" &&
   Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 
+const waitForPrintLayout = async (): Promise<void> => {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
+};
+
 export const escapeHtmlText = (value: string): string =>
   value
     .replace(/&/gu, "&amp;")
@@ -64,6 +76,10 @@ export const runPdfPrint = async (
 ): Promise<boolean> => {
   root.classList.add(PDF_EXPORT_CLASS);
   try {
+    // Force a style/layout pass so the print snapshot sees the export-only layout.
+    root.getBoundingClientRect();
+    await waitForPrintLayout();
+
     if (isTauriRuntime()) {
       await invoke("plugin:webview|print");
       return true;

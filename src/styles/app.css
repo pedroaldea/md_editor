@@ -1117,6 +1117,18 @@ button:disabled {
 }
 
 @media print {
+  @page {
+    margin: 14mm 16mm;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
   .top-bar,
   .file-sidebar,
   .pane-divider,
@@ -1126,8 +1138,10 @@ button:disabled {
   }
 
   .app-shell {
-    display: block;
-    padding: 0;
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
     background: #fff !important;
     color: #111 !important;
   }
@@ -1137,29 +1151,68 @@ button:disabled {
   .pane,
   .pane-preview,
   .preview-pane {
-    all: unset;
-    display: block;
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .pane,
+  .pane-preview {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
   }
 
   .preview-pane {
     font-family: \"Times New Roman\", serif;
-    color: #111;
-    padding: 0;
+    color: #111 !important;
+    width: auto !important;
+    padding: 0 !important;
   }
 
   .preview-pane > * {
-    max-width: 100%;
+    max-width: 100% !important;
+  }
+
+  .preview-pane h1,
+  .preview-pane h2,
+  .preview-pane h3,
+  .preview-pane h4,
+  .preview-pane h5,
+  .preview-pane h6 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .preview-pane img,
+  .preview-pane pre,
+  .preview-pane table,
+  .preview-pane blockquote {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .preview-pane pre,
+  .preview-pane table {
+    overflow: visible !important;
+  }
+
+  .preview-pane p,
+  .preview-pane li {
+    orphans: 3;
+    widows: 3;
   }
 
   .pdf-exporting .pane-editor {
     display: none !important;
   }
 
+  .pdf-exporting .workspace-shell,
+  .pdf-exporting .editor-layout,
   .pdf-exporting .pane-preview {
     display: block !important;
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
   }
 
   .pdf-exporting .preview-pane {
