@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import DOMPurify from "dompurify";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyBionicReading,
+  extractReadingWordsFromHtml,
   extractHeadings,
   getBlockIndexForLine,
   getChecklistProgress,
@@ -28,6 +30,18 @@ describe("renderMarkdown", () => {
     expect(rendered.blockCount).toBeGreaterThan(0);
   });
 
+  it("prepares fenced Mermaid code for lazy diagram rendering", () => {
+    const rendered = renderMarkdown("```mermaid\nflowchart LR\nA --> B\n```");
+    const host = document.createElement("div");
+    host.innerHTML = rendered.html;
+
+    expect(host.querySelector(".mermaid-diagram")).not.toBeNull();
+    expect(host.querySelector(".mermaid-source")?.textContent).toContain("flowchart LR");
+    expect(host.querySelector(".mermaid-source")?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector(".mermaid-canvas")?.getAttribute("aria-busy")).toBe("true");
+    expect(rendered.blockCount).toBe(1);
+  });
+
   it("sanitizes unsafe script tags", () => {
     const rendered = renderMarkdown("hello\n\n<script>alert('xss')</script>");
     expect(rendered.html).not.toContain("<script>");
@@ -38,6 +52,74 @@ describe("renderMarkdown", () => {
     expect(rendered.html).toContain("footnote-ref");
     expect(rendered.html).toContain("footnotes");
     expect(rendered.html).toContain("My note");
+  });
+
+  it("renders note, tip and warning callouts without exposing Markdown markers", () => {
+    const rendered = renderMarkdown([
+      "> [!NOTE]",
+      "> Context",
+      "",
+      "> [!TIP]",
+      "> **Use this path**",
+      "",
+      "> [!WARNING]",
+      "> Check access <script>alert('xss')</script>"
+    ].join("\n"));
+    const host = document.createElement("div");
+    host.innerHTML = rendered.html;
+
+    const note = host.querySelector<HTMLElement>(".callout-note");
+    const tip = host.querySelector<HTMLElement>(".callout-tip");
+    const warning = host.querySelector<HTMLElement>(".callout-warning");
+
+    expect(note?.tagName).toBe("ASIDE");
+    expect(note?.getAttribute("role")).toBe("note");
+    expect(note?.textContent).toContain("Note");
+    expect(tip?.textContent).toContain("Tip");
+    expect(tip?.querySelector("strong")?.textContent).toBe("Use this path");
+    expect(warning?.textContent).toContain("Warning");
+    expect(warning?.textContent).toContain("Check access");
+    expect(host.textContent).not.toMatch(/\[!(?:NOTE|TIP|WARNING)\]/u);
+    expect(rendered.html).not.toContain("<script>");
+  });
+
+  it("renders lightweight highlight and underline marks without touching code", () => {
+    const rendered = renderMarkdown("==focus this== and ++keep this++\n\n`==code==`");
+    expect(rendered.html).toContain('<mark class="inline-highlight">focus this</mark>');
+    expect(rendered.html).toContain('<u class="inline-underline">keep this</u>');
+    expect(rendered.html).toContain("<code>==code==</code>");
+  });
+
+  it("reuses sanitized HTML for quick-read extraction on a large document", () => {
+    const markdown = Array.from(
+      { length: 2_000 },
+      (_, index) => `## Section ${index}\n\nAlpha beta gamma delta epsilon.`
+    ).join("\n\n");
+    const rendered = renderMarkdown(markdown);
+    const sanitizeSpy = vi.spyOn(DOMPurify, "sanitize");
+
+    const words = extractReadingWordsFromHtml(rendered.html);
+
+    expect(words).toHaveLength(14_000);
+    expect(words.slice(0, 7)).toEqual([
+      "Section",
+      "0",
+      "Alpha",
+      "beta",
+      "gamma",
+      "delta",
+      "epsilon"
+    ]);
+    expect(sanitizeSpy).not.toHaveBeenCalled();
+    sanitizeSpy.mockRestore();
+  });
+
+  it("does not read Mermaid loading placeholders in Quick Read", () => {
+    const rendered = renderMarkdown(
+      "Before\n\n```mermaid\nflowchart LR\nA --> B\n```\n\nAfter"
+    );
+
+    expect(extractReadingWordsFromHtml(rendered.html)).toEqual(["Before", "After"]);
   });
 });
 

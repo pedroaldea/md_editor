@@ -1,27 +1,28 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import CommandPalette from "./components/CommandPalette";
-import EditorPane from "./components/EditorPane";
+import AsciiRail from "./components/AsciiRail";
 import FileSidebar from "./components/FileSidebar";
 import PreviewPane from "./components/PreviewPane";
 import TopBar from "./components/TopBar";
 import { buildHtmlExportDocument, runPdfPrint } from "./lib/export";
 import {
   applyBionicReading,
+  extractReadingWordsFromHtml,
   extractHeadings,
-  extractReadingWords,
   getBlockIndexForLine,
   getChecklistProgress,
-  renderBionicWord,
   renderMarkdown
 } from "./lib/markdown";
 import { bindShortcuts } from "./lib/shortcuts";
 import { formatMarkdownTables } from "./lib/tableFormatter";
+import { parsePdfAnnotationStore, serializePdfAnnotationStore, type PdfAnnotation } from "./lib/pdfAnnotations";
+import { getLocalPreviewAsset, resolvePreviewImageSource } from "./lib/previewAssets";
 import { useDocumentStore } from "./state/documentStore";
 import type {
   AppError,
@@ -31,7 +32,6 @@ import type {
   LinkValidationReport,
   MarkdownFileEntry,
   OpenDocumentResult,
-  ReaderPalette,
   SaveResult,
   SavedImageAsset,
   SearchHit,
@@ -40,14 +40,37 @@ import type {
 } from "./types/app";
 
 const MARKDOWN_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }];
+const OPEN_FILTER = [{ name: "Markdown / PDF", extensions: ["md", "markdown", "txt", "pdf"] }];
+const IMAGE_FILTER = [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }];
 const LOG_FILTER = [{ name: "Log", extensions: ["log", "txt"] }];
+const SPLIT_DIVIDER_WIDTH = 8;
 const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
 
-const CosmicFocusOverlay = lazy(() => import("./components/CosmicFocusOverlay"));
+interface ReadingWordsCache {
+  markdown: string;
+  words: string[];
+}
+
+interface PreviewImageAssetPayload {
+  mimeType: string;
+  base64Data: string;
+}
+
+const isPdfPath = (path: string): boolean => path.toLowerCase().endsWith(".pdf");
+
+const toPdfBytes = (payload: ArrayBuffer | Uint8Array | number[]): Uint8Array => {
+  if (payload instanceof Uint8Array) return payload;
+  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
+  if (Array.isArray(payload)) return Uint8Array.from(payload);
+  throw new Error("Native PDF reader returned an invalid byte payload");
+};
+
 const ExportModal = lazy(() => import("./components/ExportModal"));
 const HistoryModal = lazy(() => import("./components/HistoryModal"));
 const LinkValidationModal = lazy(() => import("./components/LinkValidationModal"));
-const UserGuideModal = lazy(() => import("./components/UserGuideModal"));
+const QuickReadOverlay = lazy(() => import("./components/QuickReadOverlay"));
+const EditorPane = lazy(() => import("./components/EditorPane"));
+const PdfReaderPane = lazy(() => import("./components/PdfReaderPane"));
 
 const isTauriRuntime = (): boolean =>
   typeof window !== "undefined" &&
@@ -135,6 +158,9 @@ const isTextOpenablePath = (path: string): boolean => {
   return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt");
 };
 
+const isOpenablePath = (path: string): boolean =>
+  isTextOpenablePath(path) || isPdfPath(path);
+
 const isImagePath = (path: string): boolean => {
   const lower = path.toLowerCase();
   return (
@@ -153,19 +179,24 @@ export default function App() {
     document,
     status,
     error,
+    themeMode,
     readerPalette,
     ultraRead,
+    editorSettings,
     setContent,
     loadDocument,
     loadDocumentDirty,
     markSaved,
+    markPersisted,
     markRecovered,
     newDocument,
+    setThemeMode,
     setReaderPalette,
     setUltraReadEnabled,
     setUltraReadFixation,
     setUltraReadMinWordLength,
     setUltraReadFocusWeight,
+    setEditorSettings,
     setStatus,
     setError
   } = useDocumentStore();
@@ -176,22 +207,30 @@ export default function App() {
   const [currentPreviewScrollRatio, setCurrentPreviewScrollRatio] = useState<number | null>(null);
   const [currentEditorScrollRatio, setCurrentEditorScrollRatio] = useState<number | null>(null);
   const [targetCursorLine, setTargetCursorLine] = useState<number | null>(null);
+  const [currentCursorLine, setCurrentCursorLine] = useState(1);
+  const [currentCursorColumn, setCurrentCursorColumn] = useState(1);
   const [insertTextRequest, setInsertTextRequest] = useState<{ id: number; text: string } | null>(null);
   const insertRequestIdRef = useRef(0);
   const saveInFlightRef = useRef(false);
+  const documentRevisionRef = useRef(0);
 
   const [saving, setSaving] = useState(false);
-  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [splitRatio, setSplitRatio] = useState(0.542);
   const [isResizing, setIsResizing] = useState(false);
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 900px)").matches);
   const [readMode, setReadMode] = useState(false);
+  const [editOnlyMode, setEditOnlyMode] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [focusPreviewOnly, setFocusPreviewOnly] = useState(false);
+  const [quickReadOpen, setQuickReadOpen] = useState(false);
+  const [quickReadWords, setQuickReadWords] = useState<string[]>([]);
+  const [pdfPath, setPdfPath] = useState<string | null>(null);
+  const [pdfSource, setPdfSource] = useState<Uint8Array | null>(null);
 
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<MarkdownFileEntry[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [searchingWorkspace, setSearchingWorkspace] = useState(false);
@@ -201,35 +240,69 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
-  const [userGuideOpen, setUserGuideOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
   const [validationIssues, setValidationIssues] = useState<LinkValidationIssue[]>([]);
   const [validationCheckedExternal, setValidationCheckedExternal] = useState(false);
 
-  const [cosmicOpen, setCosmicOpen] = useState(false);
-  const [cosmicPlaying, setCosmicPlaying] = useState(false);
-  const [cosmicWpm, setCosmicWpm] = useState(360);
-  const [cosmicIndex, setCosmicIndex] = useState(0);
-  const [cosmicBionic, setCosmicBionic] = useState(true);
-  const [cosmicPalette, setCosmicPalette] = useState<ReaderPalette>("void");
-  const [cosmicWordSize, setCosmicWordSize] = useState(96);
-  const [cosmicBaseWeight, setCosmicBaseWeight] = useState(560);
-  const [cosmicFocusWeight, setCosmicFocusWeight] = useState(820);
-  const [cosmicFixation, setCosmicFixation] = useState(0.45);
-  const [cosmicMinWordLength, setCosmicMinWordLength] = useState(4);
-
   const [associatedPathHandled, setAssociatedPathHandled] = useState(false);
   const associatedPathOpenedRef = useRef(false);
   const sessionHydratedRef = useRef(false);
+  const readingWordsCacheRef = useRef<ReadingWordsCache | null>(null);
 
   const layoutRef = useRef<HTMLElement | null>(null);
 
-  const rendered = useMemo(() => renderMarkdown(document.content), [document.content]);
+  const [previewSource, setPreviewSource] = useState(document.content);
+  useEffect(() => {
+    const delayMs = document.content.length >= 50_000 ? 180 : 40;
+    const timeout = window.setTimeout(() => setPreviewSource(document.content), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [document.content]);
+  const rendered = useMemo(() => renderMarkdown(previewSource), [previewSource]);
   const previewHtml = useMemo(
     () => applyBionicReading(rendered.html, ultraRead),
     [rendered.html, ultraRead]
   );
-  const cosmicWords = useMemo(() => extractReadingWords(document.content), [document.content]);
+  const getQuickReadWords = useCallback((): string[] => {
+    const markdown = document.content;
+    const cached = readingWordsCacheRef.current;
+    if (cached?.markdown === markdown) {
+      return cached.words;
+    }
+
+    // The preview HTML is already sanitized. Reuse it unless the deferred preview
+    // is still catching up with the latest editor change.
+    const html = previewSource === markdown ? rendered.html : renderMarkdown(markdown).html;
+    const words = extractReadingWordsFromHtml(html);
+    readingWordsCacheRef.current = { markdown, words };
+    return words;
+  }, [document.content, previewSource, rendered.html]);
+  const openQuickRead = useCallback((): void => {
+    if (pdfPath) {
+      setStatus("Quick read is available for Markdown documents");
+      return;
+    }
+
+    const words = getQuickReadWords();
+    if (words.length === 0) {
+      setStatus("No readable words in this document");
+      return;
+    }
+
+    setQuickReadWords(words);
+    setQuickReadOpen(true);
+  }, [getQuickReadWords, pdfPath, setStatus]);
+  const loadPdfAnnotations = useCallback(async (path: string): Promise<PdfAnnotation[]> => {
+    if (!isTauriRuntime()) return [];
+    const raw = await invoke<string>("load_pdf_annotations", { path });
+    return parsePdfAnnotationStore(raw).annotations;
+  }, []);
+  const savePdfAnnotations = useCallback(async (path: string, annotations: PdfAnnotation[]): Promise<void> => {
+    if (!isTauriRuntime()) return;
+    await invoke("save_pdf_annotations", {
+      path,
+      content: serializePdfAnnotationStore(annotations)
+    });
+  }, []);
   const headings = useMemo(() => extractHeadings(document.content), [document.content]);
   const checklistProgress = useMemo(() => getChecklistProgress(document.content), [document.content]);
 
@@ -238,91 +311,45 @@ export default function App() {
       ? `Tasks ${checklistProgress.completed}/${checklistProgress.total} (${checklistProgress.percent}%)`
       : null;
 
+  useEffect(() => {
+    documentRevisionRef.current += 1;
+  }, [document.content]);
+
   const queueInsertText = useCallback((text: string) => {
     insertRequestIdRef.current += 1;
     setInsertTextRequest({ id: insertRequestIdRef.current, text });
   }, []);
 
-  const renderCosmicWord = useCallback(
-    (word: string) => {
-      if (cosmicBionic) {
-        return renderBionicWord(word, {
-          fixation: cosmicFixation,
-          minWordLength: cosmicMinWordLength
-        });
-      }
-      return renderBionicWord(word, {
-        fixation: cosmicFixation,
-        minWordLength: Number.MAX_SAFE_INTEGER
-      });
-    },
-    [cosmicBionic, cosmicFixation, cosmicMinWordLength]
-  );
-
   useEffect(() => {
     setActiveBlockIndex((current) => Math.min(current, Math.max(0, rendered.blockCount - 1)));
   }, [rendered.blockCount]);
 
-  useEffect(() => {
-    if (cosmicIndex >= cosmicWords.length) {
-      setCosmicIndex(Math.max(cosmicWords.length - 1, 0));
-    }
-  }, [cosmicIndex, cosmicWords.length]);
-
-  useEffect(() => {
-    if (!cosmicOpen || !cosmicPlaying || cosmicWords.length === 0) {
-      return;
-    }
-
-    const intervalMs = Math.max(40, Math.round(60000 / Math.max(cosmicWpm, 1)));
-    const intervalId = window.setInterval(() => {
-      setCosmicIndex((current) => {
-        if (current >= cosmicWords.length - 1) {
-          setCosmicPlaying(false);
-          return cosmicWords.length - 1;
-        }
-        return current + 1;
-      });
-    }, intervalMs);
-
-    return () => window.clearInterval(intervalId);
-  }, [cosmicOpen, cosmicPlaying, cosmicWords.length, cosmicWpm]);
-
-  useEffect(() => {
-    if (!cosmicOpen) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.code !== "Space") {
-        return;
-      }
-
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName.toLowerCase();
-      const isTextInput =
-        tagName === "input" ||
-        tagName === "textarea" ||
-        tagName === "select" ||
-        target?.isContentEditable === true;
-
-      if (isTextInput) {
-        return;
-      }
-
-      event.preventDefault();
-      if (cosmicWords.length === 0) {
-        return;
-      }
-      setCosmicPlaying((current) => !current);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [cosmicOpen, cosmicWords.length]);
-
   const openDocumentAtPath = useCallback(
-    async (path: string, line?: number) => {
+    async (path: string, line?: number, silentFailure = false): Promise<boolean> => {
+      if (isPdfPath(path)) {
+        try {
+          const source = isTauriRuntime()
+            ? toPdfBytes(await invoke<ArrayBuffer | Uint8Array | number[]>("read_pdf_document", { path }))
+            : null;
+          setPdfSource(source);
+          setPdfPath(path);
+          setStatus(`Opened ${path.split("/").pop() ?? path}`);
+          setError(null);
+          return true;
+        } catch (unknownError) {
+          if (silentFailure) {
+            setStatus("Ready");
+            setError(null);
+            return false;
+          }
+          setStatus("Could not open file");
+          setError(normalizeError(unknownError));
+          return false;
+        }
+      }
+
+      setPdfPath(null);
+      setPdfSource(null);
       try {
         const result = await invoke<OpenDocumentResult>("open_document", { path });
         loadDocument(result);
@@ -330,19 +357,46 @@ export default function App() {
         setStatus(`Opened ${path.split("/").pop() ?? path}`);
         setError(null);
         if (typeof line === "number" && Number.isFinite(line)) {
-          setTargetCursorLine(Math.max(1, Math.round(line)));
+          const safeLine = Math.max(1, Math.round(line));
+          setTargetCursorLine(safeLine);
+          setActiveBlockIndex(getBlockIndexForLine(result.content, safeLine));
         }
+        return true;
       } catch (unknownError) {
+        if (silentFailure) {
+          setStatus("Ready");
+          setError(null);
+          return false;
+        }
         const appError = normalizeError(unknownError);
         setStatus("Could not open file");
         setError(appError);
+        return false;
       }
     },
     [loadDocument, setError, setStatus]
   );
 
+  const jumpToDocumentLine = useCallback(
+    (lineNumber: number): void => {
+      const safeLine = Math.max(1, Math.round(lineNumber));
+      setTargetCursorLine(safeLine);
+      setActiveBlockIndex(getBlockIndexForLine(document.content, safeLine));
+    },
+    [document.content]
+  );
+
+  useEffect(() => {
+    setActiveBlockIndex(0);
+    setTargetCursorLine(null);
+    setPreviewScrollTarget(0);
+    setEditorScrollTarget(0);
+    setCurrentPreviewScrollRatio(0);
+    setCurrentEditorScrollRatio(0);
+  }, [document.path]);
+
   const loadWorkspaceFolder = useCallback(
-    async (folderPath: string) => {
+    async (folderPath: string, silentFailure = false): Promise<boolean> => {
       setWorkspaceLoading(true);
       try {
         const files = await invoke<MarkdownFileEntry[]>("list_markdown_files", {
@@ -352,10 +406,19 @@ export default function App() {
         setWorkspaceFiles(files);
         setStatus(`Loaded ${files.length} files`);
         setError(null);
+        return true;
       } catch (unknownError) {
+        if (silentFailure) {
+          setWorkspaceFolder(null);
+          setWorkspaceFiles([]);
+          setStatus("Ready");
+          setError(null);
+          return false;
+        }
         const appError = normalizeError(unknownError);
         setError(appError);
         setStatus("Could not load folder");
+        return false;
       } finally {
         setWorkspaceLoading(false);
       }
@@ -415,6 +478,13 @@ export default function App() {
 
   const saveDocument = useCallback(
     async (forceSaveAs: boolean, reason: "manual" | "autosave"): Promise<boolean> => {
+      if (pdfPath) {
+        if (reason === "manual") {
+          setStatus("PDFs are read-only in this editor");
+        }
+        return false;
+      }
+
       if (saveInFlightRef.current) {
         return false;
       }
@@ -422,16 +492,30 @@ export default function App() {
       saveInFlightRef.current = true;
       setSaving(true);
       const snapshot = useDocumentStore.getState().document;
+      const snapshotRevision = documentRevisionRef.current;
+
+      const commitSave = (result: SaveResult): void => {
+        const current = useDocumentStore.getState().document;
+        const unchanged = documentRevisionRef.current === snapshotRevision && current.content === snapshot.content;
+        if (unchanged) {
+          markSaved(result);
+        } else {
+          markPersisted(result);
+          setStatus("Saved · newer edits pending");
+        }
+      };
 
       try {
         if (!forceSaveAs && snapshot.path) {
           const result = await invoke<SaveResult>("save_document", {
             path: snapshot.path,
             content: snapshot.content,
-            expected_mtime_ms: snapshot.mtimeMs
+            expectedMtimeMs: snapshot.mtimeMs
           });
-          markSaved(result);
-          setStatus(reason === "autosave" ? "Autosaved" : "Saved");
+          commitSave(result);
+          if (documentRevisionRef.current === snapshotRevision) {
+            setStatus(reason === "autosave" ? "Autosaved" : "Saved");
+          }
           setError(null);
           try {
             await invoke("create_snapshot", {
@@ -461,8 +545,11 @@ export default function App() {
           path: selected,
           content: snapshot.content
         });
-        markSaved(result);
-        await invoke("store_recovery_draft", { content: "" });
+        commitSave(result);
+        const saveAsUnchanged = documentRevisionRef.current === snapshotRevision;
+        await invoke("store_recovery_draft", {
+          content: saveAsUnchanged ? "" : useDocumentStore.getState().document.content
+        });
         try {
           await invoke("create_snapshot", {
             path: result.path,
@@ -472,7 +559,9 @@ export default function App() {
         } catch {
           // Keep save successful even if snapshot fails.
         }
-        setStatus("Saved");
+        if (saveAsUnchanged) {
+          setStatus("Saved");
+        }
         setError(null);
         return true;
       } catch (unknownError) {
@@ -485,7 +574,7 @@ export default function App() {
         setSaving(false);
       }
     },
-    [markSaved, setError, setStatus]
+    [markPersisted, markSaved, pdfPath, setError, setStatus]
   );
 
   const ensureCanReplaceDocument = useCallback(
@@ -547,7 +636,7 @@ export default function App() {
     const selected = await openDialog({
       multiple: false,
       directory: false,
-      filters: MARKDOWN_FILTER
+      filters: OPEN_FILTER
     });
 
     if (!selected || Array.isArray(selected)) {
@@ -564,6 +653,8 @@ export default function App() {
     }
 
     newDocument();
+    setPdfPath(null);
+    setPdfSource(null);
     setStatus("New document");
     setError(null);
     await invoke("store_recovery_draft", { content: "" });
@@ -571,7 +662,7 @@ export default function App() {
 
   const handleSidebarFileSelect = useCallback(
     async (path: string) => {
-      const currentPath = useDocumentStore.getState().document.path;
+      const currentPath = pdfPath ?? useDocumentStore.getState().document.path;
       if (currentPath === path) {
         return;
       }
@@ -582,14 +673,14 @@ export default function App() {
       }
       await openDocumentAtPath(path);
     },
-    [ensureCanReplaceDocument, openDocumentAtPath]
+    [ensureCanReplaceDocument, openDocumentAtPath, pdfPath]
   );
 
   const handleSearchHitSelect = useCallback(
     async (hit: SearchHit) => {
       const currentPath = useDocumentStore.getState().document.path;
       if (currentPath === hit.path) {
-        setTargetCursorLine(hit.line);
+        jumpToDocumentLine(hit.line);
         return;
       }
 
@@ -599,11 +690,13 @@ export default function App() {
       }
       await openDocumentAtPath(hit.path, hit.line);
     },
-    [ensureCanReplaceDocument, openDocumentAtPath]
+    [ensureCanReplaceDocument, jumpToDocumentLine, openDocumentAtPath]
   );
 
   const handleCursorLineChange = useCallback(
-    (lineNumber: number) => {
+    (lineNumber: number, columnNumber = 1) => {
+      setCurrentCursorLine(lineNumber);
+      setCurrentCursorColumn(columnNumber);
       setActiveBlockIndex(getBlockIndexForLine(document.content, lineNumber));
     },
     [document.content]
@@ -626,6 +719,34 @@ export default function App() {
       window.open(href, "_blank", "noopener,noreferrer");
     }
   }, []);
+
+  const resolvePreviewImage = useCallback(
+    (source: string): string =>
+      resolvePreviewImageSource(
+        source,
+        document.path,
+        isTauriRuntime() ? convertFileSrc : undefined
+      ),
+    [document.path]
+  );
+
+  const loadPreviewImageFallback = useCallback(
+    async (source: string): Promise<string | null> => {
+      if (!isTauriRuntime()) return null;
+      const localAsset = getLocalPreviewAsset(source, document.path);
+      if (!localAsset) return null;
+
+      try {
+        const image = await invoke<PreviewImageAssetPayload>("read_image_asset", {
+          path: localAsset.absolutePath
+        });
+        return `data:${image.mimeType};base64,${image.base64Data}${localAsset.fragment}`;
+      } catch {
+        return null;
+      }
+    },
+    [document.path]
+  );
 
   const handleLocalLink = useCallback(
     async (href: string) => {
@@ -650,8 +771,8 @@ export default function App() {
       }
 
       const resolvedPath = resolveRelativePath(currentPath, decodedPath);
-      if (!isTextOpenablePath(resolvedPath)) {
-        setStatus("Only local .md, .markdown, and .txt links are supported");
+      if (!isOpenablePath(resolvedPath)) {
+        setStatus("Only local .md, .markdown, .txt, and .pdf links are supported");
         return;
       }
 
@@ -692,10 +813,10 @@ export default function App() {
 
       try {
         const asset = await invoke<SavedImageAsset>("save_image_asset", {
-          document_path: documentPath,
-          file_name: payload.fileName,
-          mime_type: payload.mimeType,
-          base64_data: payload.base64Data
+          documentPath,
+          fileName: payload.fileName,
+          mimeType: payload.mimeType,
+          base64Data: payload.base64Data
         });
         setStatus(`Inserted ${asset.relativePath}`);
 
@@ -714,38 +835,75 @@ export default function App() {
     [ensureDocumentPathForAssets, setError, setStatus]
   );
 
-  const insertImageFromPath = useCallback(
-    async (sourcePath: string) => {
+  const createImageMarkdownFromPath = useCallback(
+    async (sourcePath: string, suggestedAlt?: string): Promise<string | null> => {
       const documentPath = await ensureDocumentPathForAssets();
       if (!documentPath) {
-        return;
+        return null;
       }
 
-      const documentDir = documentPath.slice(0, Math.max(documentPath.lastIndexOf("/"), 0));
+      const normalizedDocumentPath = normalizeFsPath(documentPath);
+      const normalizedSourcePath = normalizeFsPath(sourcePath);
+      const separatorIndex = normalizedDocumentPath.lastIndexOf("/");
+      const documentDir = separatorIndex > 0 ? normalizedDocumentPath.slice(0, separatorIndex) : "/";
       try {
         let relativePath: string;
 
-        if (sourcePath.startsWith(`${documentDir}/`) || sourcePath === documentDir) {
-          relativePath = sourcePath.slice(documentDir.length + 1);
+        if (documentDir === "/" && normalizedSourcePath.startsWith("/")) {
+          relativePath = normalizedSourcePath.slice(1);
+        } else if (normalizedSourcePath.startsWith(`${documentDir}/`)) {
+          relativePath = normalizedSourcePath.slice(documentDir.length + 1);
         } else {
           const imported = await invoke<SavedImageAsset>("import_image_asset", {
-            document_path: documentPath,
-            source_path: sourcePath
+            documentPath,
+            sourcePath
           });
           relativePath = imported.relativePath;
         }
 
-        const fileName = sourcePath.split("/").pop() ?? "image";
-        const alt = fileName.replace(/\.[^/.]+$/u, "").replace(/[_-]+/gu, " ").trim();
-        queueInsertText(`![${alt || "image"}](${relativePath})`);
+        const fileName = normalizedSourcePath.split("/").pop() ?? "image";
+        const inferredAlt = fileName.replace(/\.[^/.]+$/u, "").replace(/[_-]+/gu, " ").trim();
+        const alt = suggestedAlt?.trim() || inferredAlt || "image";
         setStatus(`Inserted ${relativePath}`);
+        return `![${alt}](${relativePath})`;
       } catch (unknownError) {
         const appError = normalizeError(unknownError);
         setError(appError);
-        setStatus("Could not import dropped image");
+        setStatus("Could not import image");
+        return null;
       }
     },
-    [ensureDocumentPathForAssets, queueInsertText, setError, setStatus]
+    [ensureDocumentPathForAssets, setError, setStatus]
+  );
+
+  const insertImageFromPath = useCallback(
+    async (sourcePath: string) => {
+      const snippet = await createImageMarkdownFromPath(sourcePath);
+      if (snippet) queueInsertText(snippet);
+    },
+    [createImageMarkdownFromPath, queueInsertText]
+  );
+
+  const chooseImageMarkdown = useCallback(
+    async (suggestedAlt?: string): Promise<string | null> => {
+      if (!isTauriRuntime()) {
+        const alt = suggestedAlt?.trim() || "Alt text";
+        setStatus("Inserted an image placeholder; choose the file path in Markdown");
+        return `![${alt}](image.png)`;
+      }
+
+      const selected = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: IMAGE_FILTER
+      });
+      if (!selected || Array.isArray(selected)) {
+        setStatus("Image insertion canceled");
+        return null;
+      }
+      return createImageMarkdownFromPath(selected, suggestedAlt);
+    },
+    [createImageMarkdownFromPath, setStatus]
   );
 
   const exportLogs = useCallback(async () => {
@@ -769,13 +927,6 @@ export default function App() {
       setStatus("Failed to export logs");
     }
   }, [setError, setStatus]);
-
-  const handleReaderPaletteChange = useCallback(
-    (palette: ReaderPalette) => {
-      setReaderPalette(palette);
-    },
-    [setReaderPalette]
-  );
 
   const handleUltraReadFixationChange = useCallback(
     (fixation: number) => {
@@ -801,52 +952,6 @@ export default function App() {
     [setUltraReadFocusWeight]
   );
 
-  const handleCosmicPaletteChange = useCallback((palette: ReaderPalette) => {
-    setCosmicPalette(palette);
-  }, []);
-
-  const handleCosmicWordSizeChange = useCallback((value: number) => {
-    const next = Number.isFinite(value) ? value : 96;
-    setCosmicWordSize(Math.max(44, Math.min(180, Math.round(next))));
-  }, []);
-
-  const handleCosmicBaseWeightChange = useCallback((value: number) => {
-    const next = Number.isFinite(value) ? value : 560;
-    setCosmicBaseWeight(Math.max(350, Math.min(750, Math.round(next))));
-  }, []);
-
-  const handleCosmicFocusWeightChange = useCallback((value: number) => {
-    const next = Number.isFinite(value) ? value : 820;
-    setCosmicFocusWeight(Math.max(560, Math.min(900, Math.round(next))));
-  }, []);
-
-  const handleCosmicFixationChange = useCallback((value: number) => {
-    const next = Number.isFinite(value) ? value : 0.45;
-    setCosmicFixation(Math.max(0.25, Math.min(0.75, next)));
-  }, []);
-
-  const handleCosmicMinWordLengthChange = useCallback((value: number) => {
-    const next = Number.isFinite(value) ? value : 4;
-    setCosmicMinWordLength(Math.max(2, Math.min(12, Math.round(next))));
-  }, []);
-
-  const toggleCosmic = useCallback(() => {
-    if (cosmicOpen) {
-      setCosmicOpen(false);
-      setCosmicPlaying(false);
-      return;
-    }
-
-    if (cosmicWords.length === 0) {
-      setStatus("No readable words in this document");
-      return;
-    }
-
-    setCosmicIndex(0);
-    setCosmicPlaying(false);
-    setCosmicOpen(true);
-  }, [cosmicOpen, cosmicWords.length, setStatus]);
-
   const focusWorkspaceSearch = useCallback(() => {
     const searchInput = window.document.querySelector<HTMLInputElement>(".sidebar-search-input");
     if (!searchInput) {
@@ -865,9 +970,9 @@ export default function App() {
 
       try {
         const report = await invoke<LinkValidationReport>("validate_links", {
-          document_path: document.path,
+          documentPath: document.path,
           markdown: document.content,
-          check_external: checkExternal
+          checkExternal
         });
 
         setValidationIssues(report.issues);
@@ -914,7 +1019,7 @@ export default function App() {
       try {
         const restored = await invoke<OpenDocumentResult>("load_snapshot", {
           path: document.path,
-          snapshot_id: snapshotId
+          snapshotId
         });
 
         loadDocumentDirty(restored);
@@ -1066,6 +1171,7 @@ export default function App() {
             if (next) {
               setFocusMode(false);
               setFocusPreviewOnly(false);
+              setEditOnlyMode(false);
             }
             return next;
           });
@@ -1082,10 +1188,19 @@ export default function App() {
             if (next) {
               setReadMode(false);
               setFocusPreviewOnly(false);
+              setEditOnlyMode(false);
             }
             return next;
           });
         }
+      },
+      {
+        id: "action:quick-read",
+        type: "action",
+        title: "Quick read",
+        subtitle: "Read one word at a time",
+        keywords: ["speed", "reader", "rsvp", "quick", "read"],
+        run: openQuickRead
       },
       {
         id: "action:export",
@@ -1100,13 +1215,6 @@ export default function App() {
         title: "Open version history",
         keywords: ["history", "snapshot", "restore"],
         run: async () => openHistoryModal()
-      },
-      {
-        id: "action:user-guide",
-        type: "action",
-        title: "Open user guide",
-        keywords: ["guide", "help", "how to"],
-        run: () => setUserGuideOpen(true)
       },
       {
         id: "action:links-local",
@@ -1168,7 +1276,7 @@ export default function App() {
       subtitle: `Line ${heading.line}`,
       keywords: ["heading", "jump", heading.slug, heading.text],
       run: () => {
-        setTargetCursorLine(heading.line);
+        jumpToDocumentLine(heading.line);
       }
     }));
 
@@ -1180,9 +1288,12 @@ export default function App() {
     formatTables,
     handleSidebarFileSelect,
     headings,
+    jumpToDocumentLine,
     openFolderFromDialog,
     openFromDialog,
     openHistoryModal,
+    openQuickRead,
+    pdfPath,
     readMode,
     runValidateLinks,
     saveDocument,
@@ -1193,6 +1304,10 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     void (async () => {
       try {
         const draft = await invoke<string | null>("load_recovery_draft");
@@ -1220,7 +1335,7 @@ export default function App() {
   }, [document.path, document.dirty, document.content, document.mtimeMs, saveDocument]);
 
   useEffect(() => {
-    if (document.path) {
+    if (!isTauriRuntime() || document.path) {
       return;
     }
 
@@ -1256,6 +1371,54 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!isNarrow || sidebarCollapsed) return;
+    const trigger = window.document.activeElement;
+    const sidebar = window.document.querySelector<HTMLElement>(".file-sidebar");
+    const focusableSelector =
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusFirst = window.setTimeout(() => {
+      sidebar?.querySelector<HTMLElement>(focusableSelector)?.focus();
+    }, 0);
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSidebarCollapsed(true);
+        return;
+      }
+
+      if (event.key !== "Tab" || !sidebar) return;
+      const focusable = [...sidebar.querySelectorAll<HTMLElement>(focusableSelector)].filter(
+        (element) => element.offsetParent !== null
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        sidebar.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = window.document.activeElement;
+      if (event.shiftKey && (active === first || !sidebar.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(focusFirst);
+      window.removeEventListener("keydown", onKeyDown);
+      if (trigger instanceof HTMLElement && trigger.isConnected) {
+        window.setTimeout(() => trigger.focus(), 0);
+      }
+    };
+  }, [isNarrow, sidebarCollapsed]);
+
+  useEffect(() => {
     if (!focusMode) {
       return;
     }
@@ -1273,32 +1436,35 @@ export default function App() {
   }, [focusMode]);
 
   useEffect(() => {
-    if (!isResizing || readMode || focusMode) {
+    if (!isResizing || readMode || editOnlyMode || focusMode) {
       return;
     }
 
-    const onMouseMove = (event: MouseEvent): void => {
+    const onPointerMove = (event: PointerEvent): void => {
       const layout = layoutRef.current;
       if (!layout) {
         return;
       }
       const bounds = layout.getBoundingClientRect();
-      const relativeX = event.clientX - bounds.left;
-      const nextRatio = relativeX / Math.max(bounds.width, 1);
+      const usableWidth = Math.max(bounds.width - SPLIT_DIVIDER_WIDTH, 1);
+      const relativeX = event.clientX - bounds.left - SPLIT_DIVIDER_WIDTH / 2;
+      const nextRatio = relativeX / usableWidth;
       setSplitRatio(Math.max(0.25, Math.min(0.75, nextRatio)));
     };
 
-    const onMouseUp = (): void => {
+    const onPointerEnd = (): void => {
       setIsResizing(false);
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerEnd);
+    window.addEventListener("pointercancel", onPointerEnd);
     return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerEnd);
+      window.removeEventListener("pointercancel", onPointerEnd);
     };
-  }, [focusMode, isResizing, readMode]);
+  }, [editOnlyMode, focusMode, isResizing, readMode]);
 
   useEffect(() => {
     const dispose = bindShortcuts({
@@ -1360,7 +1526,7 @@ export default function App() {
             return;
           }
 
-          if (!isTextOpenablePath(droppedPath)) {
+          if (!isOpenablePath(droppedPath)) {
             setStatus("Unsupported dropped file type");
             return;
           }
@@ -1470,23 +1636,15 @@ export default function App() {
         setUltraReadFixation(state.ultraReadFixation);
         setUltraReadMinWordLength(state.ultraReadMinWordLength);
         setUltraReadFocusWeight(state.ultraReadFocusWeight);
+        if (state.editorSettings) {
+          setEditorSettings(state.editorSettings);
+        }
 
         setReadMode(state.readMode);
+        setEditOnlyMode(false);
         setFocusMode(state.focusMode);
         setFocusPreviewOnly(state.focusPreviewOnly);
         setSplitRatio(Math.max(0.25, Math.min(0.75, state.splitRatio || 0.5)));
-
-        setCosmicOpen(state.cosmicOpen);
-        setCosmicPlaying(state.cosmicPlaying);
-        setCosmicWpm(state.cosmicWpm);
-        setCosmicIndex(state.cosmicIndex);
-        setCosmicBionic(state.cosmicBionic);
-        setCosmicPalette(state.cosmicPalette);
-        setCosmicWordSize(state.cosmicWordSize);
-        setCosmicBaseWeight(state.cosmicBaseWeight);
-        setCosmicFocusWeight(state.cosmicFocusWeight);
-        setCosmicFixation(state.cosmicFixation);
-        setCosmicMinWordLength(state.cosmicMinWordLength);
 
         setActiveBlockIndex(state.activeBlockIndex);
         setPreviewScrollTarget(state.previewScrollRatio);
@@ -1494,19 +1652,97 @@ export default function App() {
         setCurrentPreviewScrollRatio(state.previewScrollRatio);
         setCurrentEditorScrollRatio(state.editorScrollRatio);
 
+        let repairedWorkspaceFolder = state.workspaceFolder;
+        let repairedActivePath = state.activePath;
+        let repairedDraftContent = state.draftContent;
+        let repairedEditorActivePath = state.editorActivePath ?? null;
+        let repairedEditorDraftContent = state.editorDraftContent ?? null;
+
         if (state.workspaceFolder) {
-          await loadWorkspaceFolder(state.workspaceFolder);
+          const restoredWorkspace = await loadWorkspaceFolder(state.workspaceFolder, true);
+          if (!restoredWorkspace) {
+            repairedWorkspaceFolder = null;
+          }
         }
 
-        if (!associatedPathOpenedRef.current && state.activePath) {
-          await openDocumentAtPath(state.activePath);
+        if (
+          !associatedPathOpenedRef.current &&
+          state.activePath &&
+          isPdfPath(state.activePath)
+        ) {
+          if (state.editorActivePath) {
+            const restoredEditor = await openDocumentAtPath(
+              state.editorActivePath,
+              undefined,
+              true
+            );
+            if (!restoredEditor) {
+              repairedEditorActivePath = null;
+              if (state.editorDraftContent) {
+                markRecovered(state.editorDraftContent);
+                setStatus("Recovered editor draft behind PDF");
+              } else {
+                newDocument();
+              }
+            } else if (
+              state.editorDraftContent &&
+              state.editorDraftContent !== useDocumentStore.getState().document.content
+            ) {
+              setContent(state.editorDraftContent);
+            }
+          } else if (state.editorDraftContent) {
+            markRecovered(state.editorDraftContent);
+          } else {
+            newDocument();
+          }
 
-          if (state.draftContent && state.draftContent !== useDocumentStore.getState().document.content) {
+          const restoredPdf = await openDocumentAtPath(state.activePath, undefined, true);
+          if (!restoredPdf) {
+            repairedActivePath = repairedEditorActivePath;
+            repairedDraftContent = repairedEditorDraftContent;
+          }
+        } else if (!associatedPathOpenedRef.current && state.activePath) {
+          const restored = await openDocumentAtPath(state.activePath, undefined, true);
+
+          if (!restored) {
+            repairedActivePath = null;
+            if (state.draftContent) {
+              markRecovered(state.draftContent);
+              setStatus("Recovered unsaved draft from missing file");
+            } else {
+              repairedDraftContent = null;
+            }
+          }
+
+          if (
+            restored &&
+            state.draftContent &&
+            state.draftContent !== useDocumentStore.getState().document.content
+          ) {
             setContent(state.draftContent);
           }
         } else if (!associatedPathOpenedRef.current && !state.activePath && state.draftContent) {
           newDocument();
           setContent(state.draftContent);
+        }
+
+        if (
+          repairedWorkspaceFolder !== state.workspaceFolder ||
+          repairedActivePath !== state.activePath ||
+          repairedDraftContent !== state.draftContent ||
+          repairedEditorActivePath !== (state.editorActivePath ?? null) ||
+          repairedEditorDraftContent !== (state.editorDraftContent ?? null)
+        ) {
+          await invoke("save_session_state", {
+            state: {
+              ...state,
+              workspaceFolder: repairedWorkspaceFolder,
+              activePath: repairedActivePath,
+              draftContent: repairedDraftContent,
+              editorActivePath: repairedEditorActivePath,
+              editorDraftContent: repairedEditorDraftContent
+            }
+          });
         }
       } catch {
         // session restore is best-effort
@@ -1517,6 +1753,7 @@ export default function App() {
   }, [
     associatedPathHandled,
     loadWorkspaceFolder,
+    markRecovered,
     newDocument,
     openDocumentAtPath,
     setContent,
@@ -1524,18 +1761,21 @@ export default function App() {
     setUltraReadEnabled,
     setUltraReadFixation,
     setUltraReadFocusWeight,
-    setUltraReadMinWordLength
+    setUltraReadMinWordLength,
+    setEditorSettings
   ]);
 
   useEffect(() => {
-    if (!sessionHydratedRef.current) {
+    if (!isTauriRuntime() || !sessionHydratedRef.current) {
       return;
     }
 
     const sessionState: SessionState = {
       workspaceFolder,
-      activePath: document.path,
-      draftContent: document.dirty ? document.content : null,
+      activePath: pdfPath ?? document.path,
+      draftContent: pdfPath ? null : document.dirty ? document.content : null,
+      editorActivePath: document.path,
+      editorDraftContent: document.dirty ? document.content : null,
       readMode,
       focusMode,
       focusPreviewOnly,
@@ -1545,20 +1785,10 @@ export default function App() {
       ultraReadFixation: ultraRead.fixation,
       ultraReadMinWordLength: ultraRead.minWordLength,
       ultraReadFocusWeight: ultraRead.focusWeight,
-      cosmicOpen,
-      cosmicPlaying,
-      cosmicWpm,
-      cosmicIndex,
-      cosmicBionic,
-      cosmicPalette,
-      cosmicWordSize,
-      cosmicBaseWeight,
-      cosmicFocusWeight,
-      cosmicFixation,
-      cosmicMinWordLength,
       activeBlockIndex,
       previewScrollRatio: currentPreviewScrollRatio,
-      editorScrollRatio: currentEditorScrollRatio
+      editorScrollRatio: currentEditorScrollRatio,
+      editorSettings
     };
 
     const timeout = window.setTimeout(() => {
@@ -1568,24 +1798,15 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [
     activeBlockIndex,
-    cosmicBaseWeight,
-    cosmicBionic,
-    cosmicFixation,
-    cosmicFocusWeight,
-    cosmicIndex,
-    cosmicMinWordLength,
-    cosmicOpen,
-    cosmicPalette,
-    cosmicPlaying,
-    cosmicWpm,
-    cosmicWordSize,
     currentEditorScrollRatio,
     currentPreviewScrollRatio,
     document.content,
     document.dirty,
     document.path,
+    editorSettings,
     focusMode,
     focusPreviewOnly,
+    pdfPath,
     readMode,
     readerPalette,
     splitRatio,
@@ -1597,34 +1818,50 @@ export default function App() {
   ]);
 
   const layoutStyle = useMemo(() => {
-    if (isNarrow || readMode || focusMode) {
+    if (isNarrow || readMode || editOnlyMode || focusMode || pdfPath) {
       return undefined;
     }
     return {
-      gridTemplateColumns: `${splitRatio}fr 8px ${1 - splitRatio}fr`
+      gridTemplateColumns: `${splitRatio}fr ${SPLIT_DIVIDER_WIDTH}px ${1 - splitRatio}fr`
     };
-  }, [focusMode, isNarrow, readMode, splitRatio]);
+  }, [editOnlyMode, focusMode, isNarrow, pdfPath, readMode, splitRatio]);
 
-  const sidebarAvailable = (workspaceFolder !== null || workspaceLoading) && !focusMode;
+  const sidebarAvailable = !focusMode;
   const showSidebar = sidebarAvailable && !sidebarCollapsed;
+  const viewMode: "edit" | "split" | "read" = readMode ? "read" : editOnlyMode ? "edit" : "split";
   const showEditorPane = focusMode ? !focusPreviewOnly : !readMode;
-  const showPreviewPane = focusMode ? focusPreviewOnly : true;
+  const showPreviewPane = focusMode ? focusPreviewOnly : !editOnlyMode;
 
   return (
-    <div className={`app-shell${focusMode ? " is-focus-mode" : ""}`} data-reader-palette={readerPalette}>
+    <div
+      className={`app-shell${focusMode ? " is-focus-mode" : ""}${isResizing ? " is-resizing" : ""}`}
+      data-theme={themeMode}
+    >
+      {!focusMode ? (
+        <AsciiRail
+          libraryOpen={showSidebar}
+          onLibrary={() => setSidebarCollapsed((current) => !current)}
+          onOutline={() => {
+            setSidebarCollapsed(false);
+            window.setTimeout(() => {
+              window.document.querySelector<HTMLElement>(".outline-item")?.focus();
+            }, 0);
+          }}
+          onCommand={() => setCommandPaletteOpen(true)}
+        />
+      ) : null}
       {!focusMode ? (
         <TopBar
-          path={document.path}
-          dirty={document.dirty}
+          path={pdfPath ?? document.path}
+          dirty={pdfPath ? false : document.dirty}
           status={status}
           error={error}
-          readerPalette={readerPalette}
+          themeMode={themeMode}
           ultraRead={ultraRead}
-          readMode={readMode}
+          viewMode={viewMode}
           focusMode={focusMode}
           checklistLabel={checklistLabel}
-          cosmicOpen={cosmicOpen}
-          sidebarAvailable={workspaceFolder !== null || workspaceLoading}
+          sidebarAvailable={sidebarAvailable}
           sidebarCollapsed={sidebarCollapsed}
           onNew={() => {
             void createNewDocument();
@@ -1647,38 +1884,32 @@ export default function App() {
           onOpenExport={() => {
             setExportOpen(true);
           }}
+          onOpenQuickRead={openQuickRead}
           onOpenHistory={() => {
             void openHistoryModal();
-          }}
-          onOpenUserGuide={() => {
-            setUserGuideOpen(true);
           }}
           onValidateLinks={() => {
             void runValidateLinks(false);
           }}
           onFormatTables={formatTables}
-          onToggleReadMode={() => {
-            setReadMode((current) => {
-              const next = !current;
-              if (next) {
-                setFocusMode(false);
-                setFocusPreviewOnly(false);
-              }
-              return next;
-            });
+          onViewModeChange={(mode) => {
+            setReadMode(mode === "read");
+            setEditOnlyMode(mode === "edit");
+            setFocusMode(false);
+            setFocusPreviewOnly(false);
           }}
           onToggleFocusMode={() => {
             setFocusMode((current) => {
               const next = !current;
               if (next) {
                 setReadMode(false);
+                setEditOnlyMode(false);
                 setFocusPreviewOnly(false);
               }
               return next;
             });
           }}
-          onToggleCosmic={toggleCosmic}
-          onReaderPaletteChange={handleReaderPaletteChange}
+          onThemeModeChange={setThemeMode}
           onUltraReadEnabledChange={setUltraReadEnabled}
           onUltraReadFixationChange={handleUltraReadFixationChange}
           onUltraReadMinWordLengthChange={handleUltraReadMinWordLengthChange}
@@ -1686,6 +1917,7 @@ export default function App() {
           onToggleSidebar={() => {
             setSidebarCollapsed((current) => !current);
           }}
+          content={document.content}
         />
       ) : (
         <div className="focus-floating-controls">
@@ -1712,15 +1944,26 @@ export default function App() {
         </div>
       )}
 
+      {isNarrow && showSidebar ? (
+        <button
+          type="button"
+          className="mobile-sidebar-scrim"
+          aria-label="Close navigation"
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      ) : null}
+
       <section className={`workspace-shell${showSidebar ? " has-sidebar" : ""}`}>
         {showSidebar ? (
           <FileSidebar
+            isModal={isNarrow}
             folderPath={workspaceFolder}
             files={workspaceFiles}
+            headings={headings}
             searchQuery={searchQuery}
             searchHits={searchHits}
             searching={searchingWorkspace}
-            activePath={document.path}
+            activePath={pdfPath ?? document.path}
             loading={workspaceLoading}
             onOpenFolder={() => {
               void openFolderFromDialog();
@@ -1743,36 +1986,86 @@ export default function App() {
             onSelectFile={(path) => {
               void handleSidebarFileSelect(path);
             }}
+            onSelectHeading={(line) => {
+              jumpToDocumentLine(line);
+            }}
           />
         ) : null}
 
-        <main className={`editor-layout${readMode ? " is-read-mode" : ""}`} ref={layoutRef} style={layoutStyle}>
-          {showEditorPane ? (
-            <section className="pane pane-editor">
-              <EditorPane
-                value={document.content}
-                targetScrollRatio={editorScrollTarget}
-                targetCursorLine={targetCursorLine}
-                insertTextRequest={insertTextRequest}
-                onChange={setContent}
-                onCursorLineChange={handleCursorLineChange}
-                onScrollRatioChange={handleEditorScroll}
-                onClipboardImagePaste={handleClipboardImagePaste}
+        <main
+          className={`editor-layout${readMode ? " is-read-mode" : ""}${editOnlyMode ? " is-edit-mode" : ""}${focusMode ? " is-focus-surface" : ""}${pdfPath ? " has-pdf" : ""}`}
+          ref={layoutRef}
+          style={layoutStyle}
+        >
+          {pdfPath ? (
+            <Suspense fallback={<div className="pdf-reader-loading" role="status">Loading PDF reader…</div>}>
+              <PdfReaderPane
+                path={pdfPath}
+                sourceUrl={pdfSource}
+                onClose={() => {
+                  setPdfPath(null);
+                  setPdfSource(null);
+                }}
+                loadAnnotations={isTauriRuntime() ? loadPdfAnnotations : undefined}
+                saveAnnotations={isTauriRuntime() ? savePdfAnnotations : undefined}
+                onStatusChange={setStatus}
               />
+            </Suspense>
+          ) : null}
+          {!pdfPath && showEditorPane ? (
+            <section className="pane pane-editor">
+              <div className="pane-label" aria-hidden="true">Write <strong>Markdown</strong></div>
+              <Suspense fallback={<div className="pdf-reader-loading" role="status">Loading editor…</div>}>
+                <EditorPane
+                  value={document.content}
+                  targetScrollRatio={editorScrollTarget}
+                  targetCursorLine={targetCursorLine}
+                  insertTextRequest={insertTextRequest}
+                  onChange={setContent}
+                  onCursorLineChange={handleCursorLineChange}
+                  onScrollRatioChange={handleEditorScroll}
+                  onClipboardImagePaste={handleClipboardImagePaste}
+                  onImageRequest={chooseImageMarkdown}
+                  settings={editorSettings}
+                  themeMode={themeMode}
+                />
+              </Suspense>
             </section>
           ) : null}
 
-          {showEditorPane && showPreviewPane ? (
+          {!pdfPath && showEditorPane && showPreviewPane ? (
             <div
               className="pane-divider"
               role="separator"
               aria-orientation="vertical"
               aria-label="Resize panes"
-              onMouseDown={() => setIsResizing(true)}
+              aria-valuemin={25}
+              aria-valuemax={75}
+              aria-valuenow={Math.round(splitRatio * 100)}
+              aria-valuetext={`Editor ${Math.round(splitRatio * 100)}%, preview ${Math.round((1 - splitRatio) * 100)}%`}
+              tabIndex={0}
+              onPointerDown={(event) => {
+                if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) {
+                  return;
+                }
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setIsResizing(true);
+              }}
+              onKeyDown={(event) => {
+                const step = event.shiftKey ? 0.05 : 0.02;
+                let nextRatio: number | null = null;
+                if (event.key === "ArrowLeft") nextRatio = splitRatio - step;
+                if (event.key === "ArrowRight") nextRatio = splitRatio + step;
+                if (event.key === "Home") nextRatio = 0.25;
+                if (event.key === "End") nextRatio = 0.75;
+                if (nextRatio === null) return;
+                event.preventDefault();
+                setSplitRatio(Math.max(0.25, Math.min(0.75, nextRatio)));
+              }}
             />
           ) : null}
 
-          {showPreviewPane ? (
+          {!pdfPath && showPreviewPane ? (
             <section
               className="pane pane-preview"
               style={
@@ -1781,6 +2074,7 @@ export default function App() {
                 } as CSSProperties
               }
             >
+              <div className="pane-label" aria-hidden="true">Read <strong>Live preview</strong></div>
               <PreviewPane
                 html={previewHtml}
                 activeBlockIndex={activeBlockIndex}
@@ -1788,6 +2082,9 @@ export default function App() {
                 onScrollRatioChange={handlePreviewScroll}
                 onExternalLink={handleExternalLink}
                 onLocalLink={handleLocalLink}
+                resolveImageSource={resolvePreviewImage}
+                loadImageFallback={loadPreviewImageFallback}
+                themeMode={themeMode}
                 ultraReadEnabled={ultraRead.enabled}
               />
             </section>
@@ -1795,51 +2092,17 @@ export default function App() {
         </main>
       </section>
 
-      {cosmicOpen ? (
-        <Suspense fallback={null}>
-          <CosmicFocusOverlay
-            open={cosmicOpen}
-            words={cosmicWords}
-            currentIndex={cosmicIndex}
-            isPlaying={cosmicPlaying}
-            wpm={cosmicWpm}
-            bionicEnabled={cosmicBionic}
-            palette={cosmicPalette}
-            wordSize={cosmicWordSize}
-            baseWeight={cosmicBaseWeight}
-            focusWeight={cosmicFocusWeight}
-            fixation={cosmicFixation}
-            minWordLength={cosmicMinWordLength}
-            onClose={() => {
-              setCosmicOpen(false);
-              setCosmicPlaying(false);
-            }}
-            onTogglePlay={() => {
-              if (cosmicWords.length === 0) {
-                return;
-              }
-              setCosmicPlaying((current) => !current);
-            }}
-            onReset={() => {
-              setCosmicIndex(0);
-              setCosmicPlaying(false);
-            }}
-            onSeek={(index) => {
-              setCosmicIndex(index);
-            }}
-            onWpmChange={(wpm) => {
-              setCosmicWpm(Math.max(120, Math.min(900, Math.round(wpm))));
-            }}
-            onBionicChange={setCosmicBionic}
-            onPaletteChange={handleCosmicPaletteChange}
-            onWordSizeChange={handleCosmicWordSizeChange}
-            onBaseWeightChange={handleCosmicBaseWeightChange}
-            onFocusWeightChange={handleCosmicFocusWeightChange}
-            onFixationChange={handleCosmicFixationChange}
-            onMinWordLengthChange={handleCosmicMinWordLengthChange}
-            renderWord={renderCosmicWord}
-          />
-        </Suspense>
+      {!focusMode ? (
+        <footer className="ascii-status-bar" aria-label="Document status">
+          <span>{pdfPath ? "READ ONLY" : "INSERT"}</span>
+          <span>{pdfPath ? "pdf" : "md"}</span>
+          <span>utf-8</span>
+          <span>LF</span>
+          <span className="status-spacer" />
+          {!pdfPath ? <span>Ln {currentCursorLine}, Col {currentCursorColumn}</span> : <span>PDF</span>}
+          <span>{isNarrow ? "STACK" : `${Math.round(splitRatio * 100)}:${Math.round((1 - splitRatio) * 100)}`}</span>
+          <span>100%</span>
+        </footer>
       ) : null}
 
       <CommandPalette
@@ -1847,6 +2110,18 @@ export default function App() {
         items={commandPaletteItems}
         onClose={() => setCommandPaletteOpen(false)}
       />
+
+      {quickReadOpen ? (
+        <Suspense fallback={null}>
+          <QuickReadOverlay
+            open={quickReadOpen}
+            words={quickReadWords}
+            title={document.path?.split("/").pop() ?? "Untitled.md"}
+            onClose={() => setQuickReadOpen(false)}
+            onComplete={() => setStatus("Quick read complete")}
+          />
+        </Suspense>
+      ) : null}
 
       {exportOpen ? (
         <Suspense fallback={null}>
@@ -1874,12 +2149,6 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {userGuideOpen ? (
-        <Suspense fallback={null}>
-          <UserGuideModal open={userGuideOpen} onClose={() => setUserGuideOpen(false)} />
-        </Suspense>
-      ) : null}
-
       {validationOpen ? (
         <Suspense fallback={null}>
           <LinkValidationModal
@@ -1889,7 +2158,7 @@ export default function App() {
             onClose={() => setValidationOpen(false)}
             onJumpToLine={(line) => {
               setValidationOpen(false);
-              setTargetCursorLine(Math.max(1, Math.round(line)));
+              jumpToDocumentLine(line);
             }}
           />
         </Suspense>

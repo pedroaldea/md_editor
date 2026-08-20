@@ -1,8 +1,17 @@
 import type { MarkdownFileEntry, SearchHit } from "../types/app";
 
+interface HeadingEntry {
+  level: number;
+  text: string;
+  line: number;
+  slug: string;
+}
+
 interface FileSidebarProps {
+  isModal?: boolean;
   folderPath: string | null;
   files: MarkdownFileEntry[];
+  headings: HeadingEntry[];
   searchQuery: string;
   searchHits: SearchHit[];
   searching: boolean;
@@ -14,6 +23,7 @@ interface FileSidebarProps {
   onSearchQueryChange: (value: string) => void;
   onSelectSearchHit: (hit: SearchHit) => void;
   onSelectFile: (path: string) => void;
+  onSelectHeading: (line: number) => void;
 }
 
 const truncateFolder = (path: string | null): string => {
@@ -27,8 +37,10 @@ const truncateFolder = (path: string | null): string => {
 };
 
 export default function FileSidebar({
+  isModal = false,
   folderPath,
   files,
+  headings,
   searchQuery,
   searchHits,
   searching,
@@ -39,13 +51,20 @@ export default function FileSidebar({
   onCollapse,
   onSearchQueryChange,
   onSelectSearchHit,
-  onSelectFile
+  onSelectFile,
+  onSelectHeading
 }: FileSidebarProps) {
   return (
-    <aside className="file-sidebar">
+    <aside
+      className="file-sidebar"
+      role={isModal ? "dialog" : undefined}
+      aria-modal={isModal ? "true" : undefined}
+      aria-labelledby={isModal ? "workspace-sidebar-title" : undefined}
+      tabIndex={isModal ? -1 : undefined}
+    >
       <div className="file-sidebar-header">
         <div>
-          <h2>Folder</h2>
+          <h2 id="workspace-sidebar-title">Folder</h2>
           <p title={folderPath ?? undefined}>{truncateFolder(folderPath)}</p>
         </div>
         <div className="file-sidebar-actions">
@@ -73,6 +92,24 @@ export default function FileSidebar({
       </div>
 
       <div className="file-sidebar-list">
+        {headings.length > 0 ? (
+          <section className="document-outline" aria-label="Document outline">
+            <h3>Outline</h3>
+            {headings.map((heading) => (
+              <button
+                key={`${heading.line}-${heading.slug}`}
+                type="button"
+                className="outline-item"
+                style={{ paddingLeft: `${Math.max(0, heading.level - 1) * 10 + 8}px` }}
+                onClick={() => onSelectHeading(heading.line)}
+                title={`Line ${heading.line}`}
+              >
+                <span>{heading.text}</span>
+              </button>
+            ))}
+          </section>
+        ) : null}
+
         {!folderPath ? <p className="file-sidebar-empty">Open a folder to browse Markdown and text files.</p> : null}
         {folderPath && loading ? <p className="file-sidebar-empty">Loading files...</p> : null}
         {folderPath && !loading && files.length === 0 ? (

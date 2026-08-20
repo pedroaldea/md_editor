@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useDialogFocus } from "../lib/useDialogFocus";
 import type { LinkValidationIssue } from "../types/app";
 
 interface LinkValidationModalProps {
@@ -15,16 +17,20 @@ export default function LinkValidationModal({
   onClose,
   onJumpToLine
 }: LinkValidationModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  useDialogFocus(open, dialogRef, onClose, closeButtonRef);
+
   if (!open) {
     return null;
   }
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Link validation report">
+    <div ref={dialogRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label="Link validation report" tabIndex={-1}>
       <div className="modal-card validation-modal">
         <header className="modal-header">
           <h2>Link Validation</h2>
-          <button type="button" onClick={onClose}>
+          <button ref={closeButtonRef} type="button" onClick={onClose}>
             Close
           </button>
         </header>
@@ -53,4 +59,3 @@ export default function LinkValidationModal({
     </div>
   );
 }
-

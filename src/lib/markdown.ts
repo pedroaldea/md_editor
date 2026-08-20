@@ -1,8 +1,30 @@
 import DOMPurify from "dompurify";
-import hljs from "highlight.js";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdownLanguage from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import type { UltraReadConfig } from "../types/app";
+
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("js", javascript);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("markdown", markdownLanguage);
+hljs.registerLanguage("md", markdownLanguage);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("py", python);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("ts", typescript);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("html", xml);
 
 export interface RenderedMarkdown {
   html: string;
@@ -23,8 +45,9 @@ export interface ChecklistProgress {
 }
 
 const BLOCK_SELECTOR =
-  "h1, h2, h3, h4, h5, h6, p, pre, blockquote, ul, ol, table, hr";
+  "h1, h2, h3, h4, h5, h6, p, pre, blockquote, aside.callout, ul, ol, table, hr";
 const BIONIC_SKIP_SELECTOR = "pre, code, kbd, samp, a, button, input, textarea";
+const MARK_SKIP_SELECTOR = "pre, code, kbd, samp, a, button, input, textarea";
 const BIONIC_WORD_PATTERN = /([A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]*)/gu;
 const FOOTNOTE_DEFINITION_PATTERN = /^\[\^([^\]]+)\]:\s*(.*)$/u;
 const FOOTNOTE_REFERENCE_PATTERN = /\[\^([^\]]+)\]/gu;
@@ -135,6 +158,57 @@ const applyFootnotes = (rawHtml: string, definitions: Map<string, string>): stri
   return `${withReferences}<section class="footnotes"><hr /><ol>${items}</ol></section>`;
 };
 
+const CALLOUT_MARKER_PATTERN = /^\s*\[!(NOTE|TIP|WARNING)\](?:[ \t]*\r?\n)?/u;
+
+const prepareCallouts = (doc: Document): void => {
+  doc.body.querySelectorAll<HTMLQuoteElement>("blockquote").forEach((blockquote, index) => {
+    const firstParagraph = blockquote.querySelector(":scope > p:first-child");
+    if (!firstParagraph) return;
+
+    const walker = doc.createTreeWalker(firstParagraph, NodeFilter.SHOW_TEXT);
+    let markerNode: Text | null = null;
+    let markerMatch: RegExpMatchArray | null = null;
+    let currentNode = walker.nextNode();
+
+    while (currentNode) {
+      const textNode = currentNode as Text;
+      const match = (textNode.textContent ?? "").match(CALLOUT_MARKER_PATTERN);
+      if (match) {
+        markerNode = textNode;
+        markerMatch = match;
+        break;
+      }
+      if ((textNode.textContent ?? "").trim().length > 0) return;
+      currentNode = walker.nextNode();
+    }
+
+    const rawKind = markerMatch?.[1];
+    if (!markerNode || !markerMatch || !rawKind) return;
+
+    const kind = rawKind.toLowerCase() as "note" | "tip" | "warning";
+    markerNode.textContent = (markerNode.textContent ?? "").slice(markerMatch[0].length);
+    if (!firstParagraph.textContent?.trim() && firstParagraph.children.length === 0) {
+      firstParagraph.remove();
+    }
+
+    const callout = doc.createElement("aside");
+    const labelId = `callout-${kind}-${index}`;
+    callout.className = `callout callout-${kind}`;
+    callout.dataset.calloutKind = kind;
+    callout.setAttribute("role", "note");
+    callout.setAttribute("aria-labelledby", labelId);
+
+    const label = doc.createElement("p");
+    label.id = labelId;
+    label.className = "callout-label";
+    label.textContent = kind.charAt(0).toUpperCase() + kind.slice(1);
+
+    while (blockquote.firstChild) callout.append(blockquote.firstChild);
+    callout.prepend(label);
+    blockquote.replaceWith(callout);
+  });
+};
+
 const marked = new Marked(
   markedHighlight({
     langPrefix: "hljs language-",
@@ -166,11 +240,14 @@ export const renderMarkdown = (markdown: string): RenderedMarkdown => {
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(sanitizedHtml, "text/html");
+  replaceInlineMarks(doc);
+  prepareCallouts(doc);
   const blocks = Array.from(doc.body.querySelectorAll(BLOCK_SELECTOR));
 
   blocks.forEach((element, index) => {
     element.setAttribute("data-block-index", String(index));
   });
+  prepareMermaidBlocks(doc);
 
   return {
     html: doc.body.innerHTML,
@@ -339,6 +416,66 @@ const transformTextNode = (
   textNode.parentNode?.replaceChild(fragment, textNode);
 };
 
+const replaceInlineMarks = (doc: Document): void => {
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  let currentNode = walker.nextNode();
+
+  while (currentNode) {
+    const textNode = currentNode as Text;
+    if (textNode.parentElement && !textNode.parentElement.closest(MARK_SKIP_SELECTOR)) {
+      textNodes.push(textNode);
+    }
+    currentNode = walker.nextNode();
+  }
+
+  textNodes.forEach((textNode) => {
+    const input = textNode.textContent ?? "";
+    if (!/(?:==|\+\+)[^\n]+?(?:==|\+\+)/u.test(input)) return;
+
+    const fragment = doc.createDocumentFragment();
+    let cursor = 0;
+    const pattern = /==([^=\n]+)==|\+\+([^+\n]+)\+\+/gu;
+    for (const match of input.matchAll(pattern)) {
+      const index = match.index ?? 0;
+      if (index > cursor) fragment.append(doc.createTextNode(input.slice(cursor, index)));
+      const element = doc.createElement(match[1] ? "mark" : "u");
+      element.className = match[1] ? "inline-highlight" : "inline-underline";
+      element.textContent = match[1] ?? match[2] ?? "";
+      fragment.append(element);
+      cursor = index + match[0].length;
+    }
+    if (cursor < input.length) fragment.append(doc.createTextNode(input.slice(cursor)));
+    textNode.parentNode?.replaceChild(fragment, textNode);
+  });
+};
+
+const prepareMermaidBlocks = (doc: Document): void => {
+  doc.body.querySelectorAll<HTMLElement>("pre > code.language-mermaid").forEach((code) => {
+    const source = code.parentElement;
+    if (!source || source.tagName !== "PRE") return;
+
+    const figure = doc.createElement("figure");
+    figure.className = "mermaid-diagram";
+    figure.setAttribute("aria-label", "Mermaid diagram");
+    const blockIndex = source.getAttribute("data-block-index");
+    if (blockIndex !== null) figure.setAttribute("data-block-index", blockIndex);
+
+    source.className = "mermaid-source";
+    source.setAttribute("hidden", "");
+
+    const canvas = doc.createElement("div");
+    canvas.className = "mermaid-canvas";
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Mermaid diagram");
+    canvas.setAttribute("aria-busy", "true");
+    canvas.textContent = "Rendering diagram…";
+
+    source.replaceWith(figure);
+    figure.append(source, canvas);
+  });
+};
+
 export const applyBionicReading = (html: string, config: UltraReadConfig): string => {
   if (!config.enabled) {
     return html;
@@ -368,14 +505,17 @@ export const applyBionicReading = (html: string, config: UltraReadConfig): strin
   return doc.body.innerHTML;
 };
 
-export const extractReadingWords = (markdown: string): string[] => {
-  const rendered = renderMarkdown(markdown);
+export const extractReadingWordsFromHtml = (html: string): string[] => {
   const parser = new DOMParser();
-  const doc = parser.parseFromString(rendered.html, "text/html");
+  const doc = parser.parseFromString(html, "text/html");
+  doc.body.querySelectorAll(".mermaid-diagram").forEach((diagram) => diagram.remove());
   const text = doc.body.textContent ?? "";
 
   return (text.match(BIONIC_WORD_PATTERN) ?? []).map((word) => word.trim()).filter(Boolean);
 };
+
+export const extractReadingWords = (markdown: string): string[] =>
+  extractReadingWordsFromHtml(renderMarkdown(markdown).html);
 
 export const renderBionicWord = (
   word: string,

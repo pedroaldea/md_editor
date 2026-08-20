@@ -16,17 +16,15 @@ const mountTopBar = () => {
         dirty: false,
         status: "Ready",
         error: null,
-        readerPalette: "void",
         ultraRead: {
           enabled: false,
           fixation: 0.45,
           minWordLength: 4,
           focusWeight: 760
         },
-        readMode: false,
+        viewMode: "split",
         focusMode: false,
         checklistLabel: "Tasks 1/2 (50%)",
-        cosmicOpen: false,
         sidebarAvailable: true,
         sidebarCollapsed: false,
         onNew: vi.fn(),
@@ -37,13 +35,10 @@ const mountTopBar = () => {
         onOpenCommandPalette: vi.fn(),
         onOpenExport: vi.fn(),
         onOpenHistory: vi.fn(),
-        onOpenUserGuide: vi.fn(),
         onValidateLinks: vi.fn(),
         onFormatTables: vi.fn(),
-        onToggleReadMode: vi.fn(),
+        onViewModeChange: vi.fn(),
         onToggleFocusMode: vi.fn(),
-        onToggleCosmic: vi.fn(),
-        onReaderPaletteChange: vi.fn(),
         onUltraReadEnabledChange: vi.fn(),
         onUltraReadFixationChange: vi.fn(),
         onUltraReadMinWordLengthChange: vi.fn(),
@@ -65,19 +60,22 @@ const mountTopBar = () => {
 };
 
 describe("TopBar", () => {
-  it("surfaces clearer utility labels", () => {
+  it("surfaces the minimal view, theme, and secondary tool contract", () => {
     const { host, unmount } = mountTopBar();
     try {
       const text = host.textContent ?? "";
-      expect(text).toContain("More");
+      expect(text).toContain("[more]");
       expect(text).toContain("Check Links");
       expect(text).toContain("Format Tables");
-      expect(text).toContain("User Guide");
-      expect(text).toContain("Reading Settings");
-      expect(text).toContain("Hide Files");
+      expect(text).toContain("Comfort");
+      expect(text).toContain("Files");
       expect(text).toContain("Bionic");
-      expect(text).toContain("Reading");
-      expect(text).toContain("Cmd+K");
+      expect(text).toContain("[edit]");
+      expect(text).toContain("[split]");
+      expect(text).toContain("[read]");
+      expect(text).toContain("[theme: dark]");
+      expect(text).toContain("[search]");
+      expect(text).not.toContain("Md Editor");
     } finally {
       unmount();
     }

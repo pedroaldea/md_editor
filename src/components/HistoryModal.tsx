@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useDialogFocus } from "../lib/useDialogFocus";
 import type { SnapshotEntry } from "../types/app";
 
 interface HistoryModalProps {
@@ -30,16 +32,20 @@ export default function HistoryModal({
   onClose,
   onRestore
 }: HistoryModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  useDialogFocus(open, dialogRef, onClose, closeButtonRef);
+
   if (!open) {
     return null;
   }
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Version history">
+    <div ref={dialogRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label="Version history" tabIndex={-1}>
       <div className="modal-card history-modal">
         <header className="modal-header">
           <h2>Version History</h2>
-          <button type="button" onClick={onClose}>
+          <button ref={closeButtonRef} type="button" onClick={onClose}>
             Close
           </button>
         </header>
@@ -68,4 +74,3 @@ export default function HistoryModal({
     </div>
   );
 }
-

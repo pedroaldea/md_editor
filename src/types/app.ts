@@ -1,4 +1,5 @@
-export type ThemeMode = "system" | "light" | "dark";
+/** The two visual themes exposed by the minimal interface. */
+export type ThemeMode = "light" | "dark";
 export type ReaderPalette = "void" | "paper" | "mist";
 
 export interface UltraReadConfig {
@@ -81,10 +82,21 @@ export interface LinkValidationReport {
 
 export type ExportProfile = "clean-markdown" | "html" | "pdf-print";
 
+export interface EditorSettings {
+  fontSize: number;
+  lineNumbers: boolean;
+  wordWrap: boolean;
+  highlightActiveLine: boolean;
+}
+
 export interface SessionState {
   workspaceFolder: string | null;
   activePath: string | null;
   draftContent: string | null;
+  /** Editor document retained while a PDF is the active surface. */
+  editorActivePath?: string | null;
+  /** Unsaved editor content retained while a PDF is the active surface. */
+  editorDraftContent?: string | null;
   readMode: boolean;
   focusMode: boolean;
   focusPreviewOnly: boolean;
@@ -94,20 +106,10 @@ export interface SessionState {
   ultraReadFixation: number;
   ultraReadMinWordLength: number;
   ultraReadFocusWeight: number;
-  cosmicOpen: boolean;
-  cosmicPlaying: boolean;
-  cosmicWpm: number;
-  cosmicIndex: number;
-  cosmicBionic: boolean;
-  cosmicPalette: ReaderPalette;
-  cosmicWordSize: number;
-  cosmicBaseWeight: number;
-  cosmicFocusWeight: number;
-  cosmicFixation: number;
-  cosmicMinWordLength: number;
   activeBlockIndex: number;
   previewScrollRatio: number | null;
   editorScrollRatio: number | null;
+  editorSettings?: EditorSettings;
 }
 
 export interface CommandPaletteItem {

@@ -20,7 +20,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self'; img-src 'self' asset: data: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self';"
+      "csp": "default-src 'self'; connect-src 'self' asset:; img-src 'self' asset: data: http: https:; frame-src 'self' asset:; style-src 'self' 'unsafe-inline'; script-src 'self';",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/**"]
+      }
     }
   },
   "bundle": {
@@ -34,12 +38,13 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-"
     },
     "fileAssociations": [
       {
-        "ext": ["md", "markdown"],
-        "name": "Markdown Document",
+        "ext": ["md", "markdown", "pdf"],
+        "name": "Markdown or PDF Document",
         "role": "Editor"
       }
     ]

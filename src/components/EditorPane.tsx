@@ -1,15 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
-import { EditorView, placeholder } from "@codemirror/view";
-import { basicSetup } from "codemirror";
+import { EditorState, Compartment } from "@codemirror/state";
+import {
+  EditorView,
+  placeholder,
+  lineNumbers,
+  highlightActiveLineGutter,
+  highlightActiveLine,
+  drawSelection,
+  dropCursor,
+  keymap
+} from "@codemirror/view";
+import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
+import { bracketMatching, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import {
   applySlashCommand,
   filterSlashCommands,
   type SlashCommand,
   type SlashCommandId
 } from "../lib/slashCommands";
+import {
+  editMarkdownTable,
+  getMarkdownTableContext,
+  moveMarkdownTableCursor,
+  type MarkdownTableContext,
+  type TableEditAction,
+  type TableMoveDirection
+} from "../lib/tableEditor";
+import type { EditorSettings, ThemeMode } from "../types/app";
 import SlashMenu from "./SlashMenu";
+import TableToolbar from "./TableToolbar";
 
 interface EditorPaneProps {
   value: string;
@@ -17,13 +39,16 @@ interface EditorPaneProps {
   targetCursorLine: number | null;
   insertTextRequest: { id: number; text: string } | null;
   onChange: (value: string) => void;
-  onCursorLineChange: (lineNumber: number) => void;
+  onCursorLineChange: (lineNumber: number, columnNumber?: number) => void;
   onScrollRatioChange: (ratio: number) => void;
   onClipboardImagePaste: (payload: {
     fileName: string;
     mimeType: string;
     base64Data: string;
   }) => Promise<string | null>;
+  onImageRequest: (suggestedAlt?: string) => Promise<string | null>;
+  settings: EditorSettings;
+  themeMode: ThemeMode;
 }
 
 interface SlashSelectionSnapshot {
@@ -49,8 +74,42 @@ interface SlashSession {
   preTriggerSelection: SlashSelectionSnapshot;
 }
 
-const SLASH_MENU_WIDTH = 280;
+interface SelectionToolbarState {
+  left: number;
+  top: number;
+}
+
+interface TableToolbarState extends MarkdownTableContext {
+  left: number;
+  top: number;
+}
+
+const lineNumbersComp = new Compartment();
+const wordWrapComp = new Compartment();
+const activeLineComp = new Compartment();
+const themeComp = new Compartment();
+
+const SLASH_MENU_WIDTH = 370;
 const SLASH_MENU_VERTICAL_PADDING = 8;
+
+const wrapSelection = (view: EditorView, marker: "==" | "++"): boolean => {
+  const selection = view.state.selection.main;
+  if (selection.empty) return false;
+  const selected = view.state.sliceDoc(selection.from, selection.to);
+  const alreadyWrapped = selected.startsWith(marker) && selected.endsWith(marker);
+  const nextText = alreadyWrapped
+    ? selected.slice(marker.length, -marker.length)
+    : `${marker}${selected}${marker}`;
+  const from = alreadyWrapped ? selection.from : selection.from;
+  const to = alreadyWrapped ? selection.to : selection.to;
+  view.dispatch({
+    changes: { from, to, insert: nextText },
+    selection: { anchor: from, head: from + nextText.length },
+    scrollIntoView: true
+  });
+  view.focus();
+  return true;
+};
 
 const detectSlashToken = (view: EditorView): SlashToken | null => {
   const selection = view.state.selection.main;
@@ -81,16 +140,16 @@ const detectSlashToken = (view: EditorView): SlashToken | null => {
   };
 };
 
-const editorTheme = EditorView.theme(
+const createEditorTheme = (themeMode: ThemeMode) => EditorView.theme(
   {
     "&": {
       height: "100%",
-      fontSize: "15px"
+      fontSize: "var(--editor-font-size, 16px)"
     },
     ".cm-scroller": {
       fontFamily: "var(--font-mono)",
-      lineHeight: "1.6",
-      padding: "20px clamp(14px, 3vw, 48px)"
+      lineHeight: "1.7",
+      padding: "24px clamp(16px, 3vw, 52px)"
     },
     ".cm-content": {
       width: "100%",
@@ -105,9 +164,18 @@ const editorTheme = EditorView.theme(
     }
   },
   {
-    dark: false
+    dark: themeMode === "dark"
   }
 );
+
+const markdownHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading, color: "var(--text-primary)", fontWeight: "650" },
+  { tag: [tags.link, tags.url], color: "var(--accent-strong)", textDecoration: "underline" },
+  { tag: [tags.meta, tags.punctuation, tags.processingInstruction], color: "var(--text-muted)" },
+  { tag: tags.strong, color: "var(--text-primary)", fontWeight: "700" },
+  { tag: tags.emphasis, color: "var(--text-secondary)", fontStyle: "italic" },
+  { tag: tags.monospace, color: "var(--accent-strong)" }
+]);
 
 export default function EditorPane({
   value,
@@ -117,9 +185,14 @@ export default function EditorPane({
   onChange,
   onCursorLineChange,
   onScrollRatioChange,
-  onClipboardImagePaste
+  onClipboardImagePaste,
+  onImageRequest,
+  settings,
+  themeMode
 }: EditorPaneProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const slashMenuId = useId();
+  const slashStatusId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingExternalContentRef = useRef(false);
@@ -131,7 +204,13 @@ export default function EditorPane({
   const onCursorLineChangeRef = useRef(onCursorLineChange);
   const onScrollRatioChangeRef = useRef(onScrollRatioChange);
   const onClipboardImagePasteRef = useRef(onClipboardImagePaste);
+  const onImageRequestRef = useRef(onImageRequest);
+  const tableActionRef = useRef<((action: TableEditAction) => void) | null>(null);
+  const tableNavigateRef = useRef<((direction: TableMoveDirection) => void) | null>(null);
+  const dismissedTableCursorRef = useRef<number | null>(null);
   const [slashMenu, setSlashMenu] = useState<SlashSession | null>(null);
+  const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState | null>(null);
+  const [tableToolbar, setTableToolbar] = useState<TableToolbarState | null>(null);
 
   const setSlashSession = useCallback((session: SlashSession | null): void => {
     slashSessionRef.current = session;
@@ -166,7 +245,7 @@ export default function EditorPane({
   );
 
   const applySlashSelection = useCallback(
-    (forcedCommandId?: SlashCommandId): void => {
+    async (forcedCommandId?: SlashCommandId): Promise<void> => {
       const view = viewRef.current;
       const session = slashSessionRef.current;
       if (!view || !session) {
@@ -179,6 +258,28 @@ export default function EditorPane({
 
       if (!command) {
         closeSlashMenu();
+        return;
+      }
+
+      if (command.id === "image") {
+        const insertionPoint = session.from;
+        const suggestedAlt = session.preTriggerSelection.text.trim();
+        view.dispatch({
+          changes: { from: session.from, to: session.to, insert: "" },
+          selection: { anchor: insertionPoint }
+        });
+        closeSlashMenu();
+        const snippet = await onImageRequestRef.current(suggestedAlt || undefined);
+        const currentView = viewRef.current;
+        if (snippet && currentView) {
+          const safePoint = Math.min(insertionPoint, currentView.state.doc.length);
+          currentView.dispatch({
+            changes: { from: safePoint, to: safePoint, insert: snippet },
+            selection: { anchor: safePoint + snippet.length },
+            scrollIntoView: true
+          });
+        }
+        currentView?.focus();
         return;
       }
 
@@ -223,6 +324,10 @@ export default function EditorPane({
   }, [onClipboardImagePaste]);
 
   useEffect(() => {
+    onImageRequestRef.current = onImageRequest;
+  }, [onImageRequest]);
+
+  useEffect(() => {
     if (!containerRef.current || viewRef.current) {
       return;
     }
@@ -235,19 +340,20 @@ export default function EditorPane({
       }
 
       const shellRect = shell.getBoundingClientRect();
-      const estimatedHeight = Math.min(360, Math.max(56, itemCount * 46 + 12));
+      const compactRows = shellRect.width >= 430;
+      const estimatedHeight = Math.min(360, Math.max(80, itemCount * (compactRows ? 28 : 50) + 42));
+      const menuWidth = Math.min(SLASH_MENU_WIDTH, Math.max(0, shellRect.width - 16));
 
       let left = coordinates.left - shellRect.left;
       let top = coordinates.bottom - shellRect.top + 6;
 
-      if (left + SLASH_MENU_WIDTH > shellRect.width - 8) {
-        left = shellRect.width - SLASH_MENU_WIDTH - 8;
+      if (left + menuWidth > shellRect.width - 8) {
+        left = shellRect.width - menuWidth - 8;
       }
       left = Math.max(8, left);
 
       if (top + estimatedHeight > shellRect.height - 8) {
-        const aboveTop = coordinates.top - shellRect.top - estimatedHeight - 6;
-        top = Math.max(SLASH_MENU_VERTICAL_PADDING, aboveTop);
+        top = Math.max(SLASH_MENU_VERTICAL_PADDING, shellRect.height - estimatedHeight - 8);
       }
 
       return {
@@ -300,15 +406,117 @@ export default function EditorPane({
       });
     };
 
+    const syncSelectionToolbar = (view: EditorView): void => {
+      const selection = view.state.selection.main;
+      const shell = shellRef.current;
+      if (selection.empty || !shell) {
+        setSelectionToolbar(null);
+        return;
+      }
+
+      const coordinates = view.coordsAtPos(selection.from);
+      if (!coordinates) {
+        setSelectionToolbar(null);
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const toolbarWidth = Math.min(176, Math.max(0, shellRect.width - 16));
+      const left = Math.max(
+        8,
+        Math.min(shellRect.width - toolbarWidth - 8, coordinates.left - shellRect.left)
+      );
+      const top = Math.max(8, coordinates.top - shellRect.top - 42);
+      setSelectionToolbar({ left, top });
+    };
+
+    const syncTableToolbar = (view: EditorView): void => {
+      const selection = view.state.selection.main;
+      const shell = shellRef.current;
+      if (!selection.empty || !shell) {
+        setTableToolbar(null);
+        return;
+      }
+      if (
+        dismissedTableCursorRef.current !== null &&
+        dismissedTableCursorRef.current !== selection.head
+      ) {
+        dismissedTableCursorRef.current = null;
+      }
+      const context = getMarkdownTableContext(view.state.doc.toString(), selection.head);
+      const coordinates = view.coordsAtPos(selection.head);
+      if (
+        !context ||
+        !coordinates ||
+        dismissedTableCursorRef.current === selection.head
+      ) {
+        setTableToolbar(null);
+        return;
+      }
+      const shellRect = shell.getBoundingClientRect();
+      const toolbarWidth = Math.min(560, Math.max(0, shellRect.width - 16));
+      const left = Math.max(
+        8,
+        Math.min(shellRect.width - toolbarWidth - 8, coordinates.left - shellRect.left)
+      );
+      const preferredTop = coordinates.top - shellRect.top - 46;
+      const top = preferredTop >= 8
+        ? preferredTop
+        : Math.min(shellRect.height - 48, coordinates.bottom - shellRect.top + 6);
+      setTableToolbar({ ...context, left, top });
+    };
+
+    const applyTableAction = (action: TableEditAction): void => {
+      const currentView = viewRef.current;
+      if (!currentView) return;
+      const selection = currentView.state.selection.main;
+      const edited = editMarkdownTable(
+        currentView.state.doc.toString(),
+        selection.head,
+        action
+      );
+      if (!edited) return;
+      currentView.dispatch({
+        changes: { from: edited.from, to: edited.to, insert: edited.insert },
+        selection: { anchor: edited.cursor },
+        scrollIntoView: true
+      });
+      currentView.focus();
+    };
+
+    tableActionRef.current = applyTableAction;
+
+    const navigateTable = (direction: TableMoveDirection): void => {
+      const currentView = viewRef.current;
+      if (!currentView) return;
+      const cursor = moveMarkdownTableCursor(
+        currentView.state.doc.toString(),
+        currentView.state.selection.main.head,
+        direction
+      );
+      if (cursor === null) return;
+      dismissedTableCursorRef.current = null;
+      currentView.dispatch({
+        selection: { anchor: cursor },
+        scrollIntoView: true
+      });
+      currentView.focus();
+    };
+
+    tableNavigateRef.current = navigateTable;
+
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged && !applyingExternalContentRef.current) {
         onChangeRef.current(update.state.doc.toString());
       }
 
       if (update.docChanged || update.selectionSet) {
-        const line = update.state.doc.lineAt(update.state.selection.main.head).number;
-        onCursorLineChangeRef.current(line);
+        const cursor = update.state.selection.main.head;
+        const cursorLine = update.state.doc.lineAt(cursor);
+        onCursorLineChangeRef.current(cursorLine.number, cursor - cursorLine.from + 1);
         syncSlashSession(update.view);
+        syncSelectionToolbar(update.view);
+        syncTableToolbar(update.view);
       }
     });
 
@@ -316,12 +524,26 @@ export default function EditorPane({
       state: EditorState.create({
         doc: value,
         extensions: [
-          basicSetup,
           markdown(),
           placeholder("Write Markdown here..."),
-          EditorView.lineWrapping,
-          editorTheme,
-          updateListener
+          themeComp.of(createEditorTheme(themeMode)),
+          updateListener,
+          history(),
+          drawSelection(),
+          dropCursor(),
+          syntaxHighlighting(markdownHighlightStyle, { fallback: true }),
+          bracketMatching(),
+          closeBrackets(),
+          keymap.of([
+            { key: "Mod-Shift-h", run: (view) => wrapSelection(view, "==") },
+            { key: "Mod-Shift-u", run: (view) => wrapSelection(view, "++") },
+            ...closeBracketsKeymap,
+            ...defaultKeymap,
+            ...historyKeymap
+          ]),
+          lineNumbersComp.of(settings.lineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []),
+          wordWrapComp.of(settings.wordWrap ? EditorView.lineWrapping : []),
+          activeLineComp.of(settings.highlightActiveLine ? highlightActiveLine() : [])
         ]
       }),
       parent: containerRef.current
@@ -337,9 +559,34 @@ export default function EditorPane({
       if (slashSessionRef.current) {
         syncSlashSession(view);
       }
+      if (!view.state.selection.main.empty) {
+        syncSelectionToolbar(view);
+      }
+      syncTableToolbar(view);
     };
 
     view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
+
+    let resizeFrame: number | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
+      }
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        view.requestMeasure();
+        if (slashSessionRef.current) {
+          syncSlashSession(view);
+        }
+        if (!view.state.selection.main.empty) {
+          syncSelectionToolbar(view);
+        }
+        syncTableToolbar(view);
+      });
+    });
+    if (shellRef.current) {
+      resizeObserver.observe(shellRef.current);
+    }
 
     const toBase64 = async (file: File): Promise<string> => {
       const arrayBuffer = await file.arrayBuffer();
@@ -423,6 +670,21 @@ export default function EditorPane({
 
       const session = slashSessionRef.current;
       if (!session) {
+        const selection = view.state.selection.main;
+        const tableContext = selection.empty
+          ? getMarkdownTableContext(view.state.doc.toString(), selection.head)
+          : null;
+        if (tableContext && event.key === "Tab") {
+          event.preventDefault();
+          navigateTable(event.shiftKey ? "previous" : "next");
+          return;
+        }
+        if (tableContext && event.key === "Escape") {
+          event.preventDefault();
+          dismissedTableCursorRef.current = selection.head;
+          setTableToolbar(null);
+          view.focus();
+        }
         return;
       }
 
@@ -440,7 +702,7 @@ export default function EditorPane({
 
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        applySlashSelection();
+        void applySlashSelection();
         return;
       }
 
@@ -453,17 +715,63 @@ export default function EditorPane({
     view.contentDOM.addEventListener("paste", onPaste);
     view.contentDOM.addEventListener("keydown", onKeyDown, true);
     viewRef.current = view;
-    onCursorLineChangeRef.current(1);
+    onCursorLineChangeRef.current(1, 1);
+    window.requestAnimationFrame(() => syncTableToolbar(view));
 
     return () => {
       view.scrollDOM.removeEventListener("scroll", onScroll);
+      resizeObserver.disconnect();
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
+      }
       view.contentDOM.removeEventListener("paste", onPaste);
       view.contentDOM.removeEventListener("keydown", onKeyDown, true);
       view.destroy();
       viewRef.current = null;
+      tableActionRef.current = null;
+      tableNavigateRef.current = null;
       closeSlashMenu();
     };
   }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: themeComp.reconfigure(createEditorTheme(themeMode)) });
+  }, [themeMode]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+    view.dispatch({
+      effects: [
+        lineNumbersComp.reconfigure(settings.lineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []),
+        wordWrapComp.reconfigure(settings.wordWrap ? EditorView.lineWrapping : []),
+        activeLineComp.reconfigure(settings.highlightActiveLine ? highlightActiveLine() : [])
+      ]
+    });
+  }, [settings.lineNumbers, settings.wordWrap, settings.highlightActiveLine]);
+
+  useEffect(() => {
+    const editor = viewRef.current?.contentDOM;
+    if (!editor) return;
+
+    editor.setAttribute("aria-haspopup", "listbox");
+    editor.setAttribute("aria-expanded", slashMenu ? "true" : "false");
+    if (slashMenu) {
+      editor.setAttribute("aria-controls", slashMenuId);
+      editor.setAttribute("aria-describedby", slashStatusId);
+      const activeItem = slashMenu.items[slashMenu.activeIndex];
+      if (activeItem) editor.setAttribute("aria-activedescendant", `slash-command-${activeItem.id}`);
+      else editor.removeAttribute("aria-activedescendant");
+    } else {
+      editor.removeAttribute("aria-controls");
+      editor.removeAttribute("aria-describedby");
+      editor.removeAttribute("aria-activedescendant");
+    }
+  }, [slashMenu, slashMenuId, slashStatusId]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -539,17 +847,75 @@ export default function EditorPane({
   }, [insertTextRequest]);
 
   return (
-    <div className="editor-pane" ref={shellRef}>
+    <div className="editor-pane" ref={shellRef} style={{ "--editor-font-size": `${settings.fontSize}px` } as React.CSSProperties}>
       <div className="editor-pane-host" ref={containerRef} />
+      {selectionToolbar ? (
+        <div
+          className="selection-toolbar"
+          role="toolbar"
+          aria-label="Text annotation tools"
+          style={{ left: selectionToolbar.left, top: selectionToolbar.top }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            aria-label="Highlight selection"
+            onClick={() => {
+              if (viewRef.current) {
+                wrapSelection(viewRef.current, "==");
+              }
+              setSelectionToolbar(null);
+            }}
+          >
+            Highlight
+          </button>
+          <button
+            type="button"
+            aria-label="Underline selection"
+            onClick={() => {
+              if (viewRef.current) {
+                wrapSelection(viewRef.current, "++");
+              }
+              setSelectionToolbar(null);
+            }}
+          >
+            Underline
+          </button>
+        </div>
+      ) : null}
+      {tableToolbar && !selectionToolbar && !slashMenu ? (
+        <TableToolbar
+          context={tableToolbar}
+          left={tableToolbar.left}
+          top={tableToolbar.top}
+          onAction={(action) => tableActionRef.current?.(action)}
+          onNavigate={(direction) => tableNavigateRef.current?.(direction)}
+          onDone={() => {
+            const view = viewRef.current;
+            if (!view) return;
+            dismissedTableCursorRef.current = view.state.selection.main.head;
+            setTableToolbar(null);
+            view.focus();
+          }}
+        />
+      ) : null}
       <SlashMenu
+        id={slashMenuId}
         open={slashMenu !== null}
         left={slashMenu?.left ?? 0}
         top={slashMenu?.top ?? 0}
         items={slashMenu?.items ?? []}
         activeIndex={slashMenu?.activeIndex ?? 0}
-        onSelect={(commandId) => applySlashSelection(commandId)}
+        onSelect={(commandId) => { void applySlashSelection(commandId); }}
         onHoverIndex={setSlashActiveIndex}
       />
+      <div id={slashStatusId} className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+        {slashMenu
+          ? slashMenu.items.length > 0
+            ? `${slashMenu.items[slashMenu.activeIndex]?.title ?? "Command"}, ${slashMenu.activeIndex + 1} of ${slashMenu.items.length}. Use up and down arrows to navigate, Enter to insert, Escape to close.`
+            : "No slash commands match."
+          : ""}
+      </div>
     </div>
   );
 }

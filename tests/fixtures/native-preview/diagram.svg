@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360" role="img" aria-labelledby="title description">
+  <title id="title">Local image proof</title>
+  <desc id="description">A controlled local image used to verify Markdown previews.</desc>
+  <rect width="960" height="360" fill="#f0f2ef"/>
+  <path d="M120 180h190m80 0h180m80 0h190" stroke="#155f9f" stroke-width="4"/>
+  <path d="m292 168 18 12-18 12m260-24 18 12-18 12m270-24 18 12-18 12" fill="none" stroke="#155f9f" stroke-width="4"/>
+  <g fill="#f7f8f5" stroke="#171a1a" stroke-width="3">
+    <rect x="40" y="115" width="250" height="130"/>
+    <rect x="310" y="115" width="240" height="130"/>
+    <rect x="570" y="115" width="250" height="130"/>
+  </g>
+  <g fill="#171a1a" font-family="ui-monospace, monospace" font-size="26" text-anchor="middle">
+    <text x="165" y="174">MARKDOWN</text>
+    <text x="430" y="174">LOCAL ASSET</text>
+    <text x="695" y="174">PREVIEW OK</text>
+  </g>
+</svg>

@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useDialogFocus } from "../lib/useDialogFocus";
 import type { ExportProfile } from "../types/app";
 
 interface ExportModalProps {
@@ -7,12 +9,16 @@ interface ExportModalProps {
 }
 
 export default function ExportModal({ open, onClose, onSelect }: ExportModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const firstOptionRef = useRef<HTMLButtonElement | null>(null);
+  useDialogFocus(open, dialogRef, onClose, firstOptionRef);
+
   if (!open) {
     return null;
   }
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Export options">
+    <div ref={dialogRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label="Export options" tabIndex={-1}>
       <div className="modal-card export-modal">
         <header className="modal-header">
           <h2>Export</h2>
@@ -22,7 +28,7 @@ export default function ExportModal({ open, onClose, onSelect }: ExportModalProp
         </header>
 
         <div className="modal-content export-options">
-          <button type="button" onClick={() => onSelect("clean-markdown")}>
+          <button ref={firstOptionRef} type="button" onClick={() => onSelect("clean-markdown")}>
             Clean Markdown (.md)
           </button>
           <button type="button" onClick={() => onSelect("html")}>
@@ -36,4 +42,3 @@ export default function ExportModal({ open, onClose, onSelect }: ExportModalProp
     </div>
   );
 }
-

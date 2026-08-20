@@ -4,7 +4,7 @@ import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import PreviewPane from "../../src/components/PreviewPane";
 
-const mountPreview = (html: string, handlers?: Partial<{ onExternalLink: (href: string) => void; onLocalLink: (href: string) => void }>) => {
+const mountPreview = (html: string, handlers?: Partial<{ onExternalLink: (href: string) => void; onLocalLink: (href: string) => void; resolveImageSource: (source: string) => string; loadImageFallback: (source: string) => Promise<string | null> }>) => {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -21,6 +21,9 @@ const mountPreview = (html: string, handlers?: Partial<{ onExternalLink: (href: 
         onScrollRatioChange: vi.fn(),
         onExternalLink,
         onLocalLink,
+        resolveImageSource: handlers?.resolveImageSource,
+        loadImageFallback: handlers?.loadImageFallback,
+        themeMode: "light",
         ultraReadEnabled: false
       })
     );
@@ -40,6 +43,41 @@ const mountPreview = (html: string, handlers?: Partial<{ onExternalLink: (href: 
 };
 
 describe("PreviewPane link handling", () => {
+  it("renders resolved image sources instead of broken Markdown-relative URLs", () => {
+    const resolver = vi.fn(() => "asset://localhost/workspace/assets/diagram.png");
+    const { host, unmount } = mountPreview('<p><img src="assets/diagram.png" alt="Diagram"></p>', {
+      resolveImageSource: resolver
+    });
+
+    try {
+      expect(resolver).toHaveBeenCalledWith("assets/diagram.png");
+      expect(host.querySelector("img")?.getAttribute("src")).toBe(
+        "asset://localhost/workspace/assets/diagram.png"
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("falls back to validated native image data when the asset URL is blocked", async () => {
+    const fallback = vi.fn(async () => "data:image/png;base64,AAAA");
+    const { host, unmount } = mountPreview('<p><img src="assets/diagram.png" alt="Diagram"></p>', {
+      resolveImageSource: () => "asset://localhost/outside-scope/diagram.png",
+      loadImageFallback: fallback
+    });
+
+    try {
+      const image = host.querySelector("img");
+      image?.dispatchEvent(new Event("error"));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(fallback).toHaveBeenCalledWith("assets/diagram.png");
+      expect(image?.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+    } finally {
+      unmount();
+    }
+  });
+
   it("routes external links to the external handler", () => {
     const external = vi.fn();
     const local = vi.fn();

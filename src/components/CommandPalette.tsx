@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDialogFocus } from "../lib/useDialogFocus";
 import type { CommandPaletteItem } from "../types/app";
 
 interface CommandPaletteProps {
@@ -39,6 +40,9 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = "command-palette-options";
+  useDialogFocus(open, dialogRef, onClose, inputRef);
 
   const filtered = useMemo(() => {
     const normalizedQuery = normalize(query);
@@ -51,6 +55,10 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
   }, [items, query]);
 
   useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(filtered.length - 1, 0)));
+  }, [filtered.length]);
+
+  useEffect(() => {
     if (!open) {
       setQuery("");
       setActiveIndex(0);
@@ -58,10 +66,6 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
     }
 
     setActiveIndex(0);
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
   }, [open]);
 
   useEffect(() => {
@@ -70,12 +74,6 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
     }
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setActiveIndex((current) => (filtered.length === 0 ? 0 : (current + 1) % filtered.length));
@@ -111,7 +109,7 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
   }
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div ref={dialogRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label="Command palette" tabIndex={-1}>
       <div className="modal-card command-palette">
         <input
           ref={inputRef}
@@ -120,17 +118,26 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Type a command, file, or heading..."
           aria-label="Command palette query"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls={listboxId}
+          aria-activedescendant={filtered[activeIndex] ? `command-palette-${filtered[activeIndex].id}` : undefined}
         />
 
-        <div className="command-palette-list">
+        <div id={listboxId} className="command-palette-list" role="listbox" aria-label="Commands">
           {filtered.length === 0 ? (
             <p className="modal-empty">No matches</p>
           ) : (
             filtered.map((item, index) => (
               <button
                 key={item.id}
+                id={`command-palette-${item.id}`}
                 type="button"
+                role="option"
+                aria-selected={index === activeIndex}
                 className={`command-palette-item${index === activeIndex ? " is-active" : ""}`}
+                onPointerMove={() => setActiveIndex(index)}
                 onClick={() => {
                   void Promise.resolve(item.run()).finally(() => onClose());
                 }}
@@ -145,4 +152,3 @@ export default function CommandPalette({ open, items, onClose }: CommandPaletteP
     </div>
   );
 }
-

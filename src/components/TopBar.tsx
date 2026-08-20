@@ -1,17 +1,18 @@
-import type { MouseEvent } from "react";
-import type { AppError, ReaderPalette, UltraReadConfig } from "../types/app";
+import { useMemo } from "react";
+import type { AppError, ThemeMode, UltraReadConfig } from "../types/app";
+
+export type ViewMode = "edit" | "split" | "read";
 
 interface TopBarProps {
   path: string | null;
   dirty: boolean;
   status: string;
   error: AppError | null;
-  readerPalette: ReaderPalette;
+  themeMode?: ThemeMode;
   ultraRead: UltraReadConfig;
-  readMode: boolean;
+  viewMode: ViewMode;
   focusMode: boolean;
   checklistLabel: string | null;
-  cosmicOpen: boolean;
   sidebarAvailable: boolean;
   sidebarCollapsed: boolean;
   onNew: () => void;
@@ -21,47 +22,40 @@ interface TopBarProps {
   onSaveAs: () => void;
   onOpenCommandPalette: () => void;
   onOpenExport: () => void;
+  onOpenQuickRead?: () => void;
   onOpenHistory: () => void;
-  onOpenUserGuide: () => void;
   onValidateLinks: () => void;
   onFormatTables: () => void;
-  onToggleReadMode: () => void;
+  onViewModeChange: (mode: ViewMode) => void;
   onToggleFocusMode: () => void;
-  onToggleCosmic: () => void;
-  onReaderPaletteChange: (palette: ReaderPalette) => void;
+  onThemeModeChange?: (themeMode: ThemeMode) => void;
   onUltraReadEnabledChange: (enabled: boolean) => void;
   onUltraReadFixationChange: (fixation: number) => void;
   onUltraReadMinWordLengthChange: (minWordLength: number) => void;
   onUltraReadFocusWeightChange: (focusWeight: number) => void;
   onToggleSidebar: () => void;
+  content?: string;
 }
 
 const getDocumentName = (path: string | null): string => {
-  if (!path) {
-    return "Untitled.md";
-  }
+  if (!path) return "untitled.md";
   const chunks = path.split("/");
   return chunks[chunks.length - 1] ?? path;
 };
 
-const closeDetailsMenu = (event: MouseEvent<HTMLButtonElement>): void => {
-  const details = event.currentTarget.closest("details");
-  if (details instanceof HTMLDetailsElement) {
-    details.open = false;
-  }
-};
+const formatCount = (value: number): string =>
+  value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
 
 export default function TopBar({
   path,
   dirty,
   status,
   error,
-  readerPalette,
+  themeMode = "dark",
   ultraRead,
-  readMode,
+  viewMode,
   focusMode,
   checklistLabel,
-  cosmicOpen,
   sidebarAvailable,
   sidebarCollapsed,
   onNew,
@@ -71,213 +65,145 @@ export default function TopBar({
   onSaveAs,
   onOpenCommandPalette,
   onOpenExport,
+  onOpenQuickRead = () => undefined,
   onOpenHistory,
-  onOpenUserGuide,
   onValidateLinks,
   onFormatTables,
-  onToggleReadMode,
+  onViewModeChange,
   onToggleFocusMode,
-  onToggleCosmic,
-  onReaderPaletteChange,
+  onThemeModeChange = () => undefined,
   onUltraReadEnabledChange,
   onUltraReadFixationChange,
   onUltraReadMinWordLengthChange,
   onUltraReadFocusWeightChange,
-  onToggleSidebar
+  onToggleSidebar,
+  content = ""
 }: TopBarProps) {
+  const isPdf = path?.toLowerCase().endsWith(".pdf") ?? false;
+  const wordCount = useMemo(() => {
+    const matches = content.match(/[\p{L}\p{N}\-']+/gu);
+    return matches?.length ?? 0;
+  }, [content]);
+  const readTime = Math.max(1, Math.ceil(wordCount / 200));
+  const visibleStatus = error
+    ? `Error: ${error.code}`
+    : dirty
+      ? "Unsaved"
+      : status.toLowerCase().includes("saving")
+        ? "Saving"
+        : "Saved";
+
   return (
     <header className="top-bar">
-      <div className="top-left">
-        <h1>Md Editor</h1>
-        <p>
-          {getDocumentName(path)}
-          {dirty ? " • Unsaved" : ""}
-        </p>
+      <button
+        type="button"
+        className="mobile-menu-trigger"
+        aria-label={sidebarCollapsed ? "Open navigation" : "Close navigation"}
+        aria-expanded={!sidebarCollapsed}
+        onClick={onToggleSidebar}
+      >
+        [=]
+      </button>
+
+      <div className="top-document" title={path ?? undefined}>
+        <strong>{getDocumentName(path)}</strong>
+        <span aria-hidden="true">|</span>
+        <span>{isPdf ? "PDF" : "Markdown"}</span>
       </div>
 
-      <div className="top-cluster top-actions" aria-label="Document actions">
-        <button type="button" onClick={onNew} title="New document">
-          New
+      <div className="top-context">
+        <button
+          type="button"
+          className={`top-save-state${error ? " is-error" : dirty ? " is-dirty" : ""}`}
+          onClick={onSave}
+          disabled={isPdf}
+          aria-live="polite"
+          title={isPdf ? "PDFs are read-only" : "Save document"}
+        >
+          {visibleStatus}
         </button>
-        <button type="button" onClick={onOpen} title="Open file">
-          Open
-        </button>
-        <button type="button" onClick={onSave} title="Save">
-          Save
-        </button>
-        {sidebarAvailable ? (
-          <button
-            type="button"
-            className={!sidebarCollapsed ? "is-active" : ""}
-            onClick={onToggleSidebar}
-            title="Toggle file sidebar"
-          >
-            {sidebarCollapsed ? "Files" : "Hide Files"}
+        {!isPdf ? <span>{formatCount(wordCount)} words · {readTime} min</span> : <span>document view</span>}
+      </div>
+
+      <nav className="view-switcher" aria-label="View mode">
+        {isPdf ? (
+          <button type="button" className="is-active" aria-label="PDF" aria-pressed="true">
+            [pdf]
+          </button>
+        ) : (
+          (["edit", "split", "read"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={viewMode === mode ? "is-active" : ""}
+              aria-label={mode[0].toUpperCase() + mode.slice(1)}
+              aria-pressed={viewMode === mode}
+              onClick={() => onViewModeChange(mode)}
+            >
+              [{mode}]
+            </button>
+          ))
+        )}
+        {!isPdf ? (
+          <button type="button" aria-label="PDF" title="Open a PDF" onClick={onOpen}>
+            [pdf]
           </button>
         ) : null}
-        <button type="button" onClick={onOpenCommandPalette} title="Command palette">
-          Cmd+K
+        <button
+          type="button"
+          className="theme-toggle"
+          aria-label={`Theme: ${themeMode}`}
+          onClick={() => onThemeModeChange(themeMode === "dark" ? "light" : "dark")}
+        >
+          [theme: {themeMode}]
         </button>
-      </div>
+      </nav>
 
-      <div className="top-cluster read-controls" aria-label="Reading controls">
-        <label className="control-select" title="Reading palette">
-          <span>Palette</span>
-          <select
-            value={readerPalette}
-            onChange={(event) => onReaderPaletteChange(event.target.value as ReaderPalette)}
-            aria-label="Reading palette"
-          >
-            <option value="void">Void</option>
-            <option value="paper">Paper</option>
-            <option value="mist">Mist</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          className={readMode ? "is-active" : ""}
-          onClick={onToggleReadMode}
-          title="Toggle reading mode"
-        >
-          Reading
+      <div className="top-utilities" aria-label="Utilities">
+        <button type="button" onClick={onOpenCommandPalette} aria-label="Search commands">
+          [search]
         </button>
-        <button
-          type="button"
-          className={focusMode ? "is-active" : ""}
-          onClick={onToggleFocusMode}
-          title="Toggle writer focus mode"
-        >
-          Focus
-        </button>
-        <button
-          type="button"
-          className={ultraRead.enabled ? "is-active" : ""}
-          onClick={() => onUltraReadEnabledChange(!ultraRead.enabled)}
-          title="Toggle Bionic reading"
-        >
-          Bionic
-        </button>
-        <details className="toolbar-menu" title="Reading settings">
-          <summary>Reading Settings</summary>
-          <div className="toolbar-menu-list reader-menu-list">
-            <label className="control-slider" title={`Focus ${Math.round(ultraRead.fixation * 100)}%`}>
-              <span>Focus</span>
-              <input
-                type="range"
-                min={25}
-                max={75}
-                step={5}
-                value={Math.round(ultraRead.fixation * 100)}
-                onChange={(event) => onUltraReadFixationChange(Number(event.target.value) / 100)}
-                aria-label="Bionic focus"
-                disabled={!ultraRead.enabled}
-              />
-            </label>
-            <label className="control-number" title="Minimum word length">
-              <span>Min</span>
-              <input
-                type="number"
-                min={2}
-                max={12}
-                step={1}
-                value={ultraRead.minWordLength}
-                onChange={(event) => onUltraReadMinWordLengthChange(Number(event.target.value))}
-                aria-label="Bionic minimum word length"
-                disabled={!ultraRead.enabled}
-              />
-            </label>
-            <label
-              className="control-slider"
-              title={`Bionic weight ${Math.round(ultraRead.focusWeight)}`}
-            >
-              <span>Bold</span>
-              <input
-                type="range"
-                min={560}
-                max={900}
-                step={10}
-                value={Math.round(ultraRead.focusWeight)}
-                onChange={(event) => onUltraReadFocusWeightChange(Number(event.target.value))}
-                aria-label="Bionic boldness"
-                disabled={!ultraRead.enabled}
-              />
-            </label>
-          </div>
-        </details>
-        {checklistLabel ? <span className="checklist-chip">{checklistLabel}</span> : null}
-      </div>
-
-      <div className="top-cluster top-utilities" aria-label="Utilities">
-        <button type="button" onClick={onOpenExport} title="Export document">
-          Export
-        </button>
-        <button type="button" onClick={onOpenHistory} title="Version history">
-          History
-        </button>
-        <details className="toolbar-menu" title="More tools">
-          <summary>More</summary>
+        <details className="toolbar-menu top-more">
+          <summary>[more]</summary>
           <div className="toolbar-menu-list">
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onOpenUserGuide();
-              }}
-            >
-              User Guide
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onSaveAs();
-              }}
-            >
-              Save As
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onOpenFolder();
-              }}
-            >
-              Open Folder
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onValidateLinks();
-              }}
-            >
-              Check Links
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                closeDetailsMenu(event);
-                onFormatTables();
-              }}
-            >
-              Format Tables
-            </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  closeDetailsMenu(event);
-                  onToggleCosmic();
-                }}
-              >
-              {cosmicOpen ? "Close Speed Reader" : "Open Speed Reader"}
-              </button>
+            <span className="menu-heading">Document</span>
+            <button type="button" onClick={onNew}>New</button>
+            <button type="button" onClick={onOpen}>Open</button>
+            <button type="button" onClick={onSaveAs} disabled={isPdf}>Save As</button>
+            <button type="button" onClick={onOpenFolder}>Open Folder</button>
+            <button type="button" onClick={onOpenExport}>Export</button>
+            <span className="menu-heading">Reading</span>
+            <button type="button" onClick={onOpenQuickRead} disabled={isPdf}>Quick read</button>
+            <button type="button" className={ultraRead.enabled ? "is-active" : ""} onClick={() => onUltraReadEnabledChange(!ultraRead.enabled)} disabled={isPdf}>Bionic</button>
+            <details className="comfort-settings">
+              <summary>Comfort</summary>
+              <div className="reader-settings-grid">
+                <label>
+                  <span>Focus {Math.round(ultraRead.fixation * 100)}%</span>
+                  <input type="range" min={25} max={75} step={5} value={Math.round(ultraRead.fixation * 100)} onChange={(event) => onUltraReadFixationChange(Number(event.target.value) / 100)} disabled={!ultraRead.enabled} />
+                </label>
+                <label>
+                  <span>Min word</span>
+                  <input type="number" min={2} max={12} value={ultraRead.minWordLength} onChange={(event) => onUltraReadMinWordLengthChange(Number(event.target.value))} disabled={!ultraRead.enabled} />
+                </label>
+                <label>
+                  <span>Weight</span>
+                  <input type="range" min={560} max={900} step={10} value={ultraRead.focusWeight} onChange={(event) => onUltraReadFocusWeightChange(Number(event.target.value))} disabled={!ultraRead.enabled} />
+                </label>
+              </div>
+            </details>
+            <span className="menu-heading">Tools</span>
+            <button type="button" onClick={onOpenHistory}>History</button>
+            <button type="button" onClick={onValidateLinks}>Check Links</button>
+            <button type="button" onClick={onFormatTables}>Format Tables</button>
+            <button type="button" onClick={onToggleFocusMode}>{focusMode ? "Exit Focus" : "Focus"}</button>
+            {sidebarAvailable ? <button type="button" onClick={onToggleSidebar}>{sidebarCollapsed ? "Files" : "Hide Files"}</button> : null}
+            {checklistLabel ? <span className="menu-note">{checklistLabel}</span> : null}
           </div>
         </details>
       </div>
 
-      <div className="top-status" aria-live="polite">
-        <span>{error ? `Error: ${error.code}` : status}</span>
-      </div>
+      <div className="top-status" aria-live="polite">{error ? `${error.code}: ${error.message}` : status}</div>
     </header>
   );
 }

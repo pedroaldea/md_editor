@@ -1,10 +1,11 @@
 mod commands;
 
 use commands::{
-    create_snapshot, export_logs, import_image_asset, list_markdown_files, list_snapshots,
-    load_recovery_draft, load_session_state, load_snapshot, open_document, save_as_document,
-    save_document, save_image_asset, save_session_state, search_workspace, store_recovery_draft,
-    validate_links, write_text_file,
+    create_snapshot, document_exists, export_logs, import_image_asset, list_markdown_files,
+    list_snapshots, load_pdf_annotations, load_recovery_draft, load_session_state, load_snapshot,
+    open_document, read_image_asset, read_pdf_document, save_as_document, save_document,
+    save_image_asset, save_pdf_annotations, save_session_state, search_workspace,
+    store_recovery_draft, validate_links, write_text_file,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -21,7 +22,7 @@ fn is_supported_open_path(path: &Path) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    matches!(extension.as_str(), "md" | "markdown" | "txt")
+    matches!(extension.as_str(), "md" | "markdown" | "txt" | "pdf")
 }
 
 fn first_launch_open_path() -> Option<String> {
@@ -119,12 +120,17 @@ fn main() {
             search_workspace,
             save_image_asset,
             import_image_asset,
+            read_image_asset,
+            read_pdf_document,
+            load_pdf_annotations,
+            save_pdf_annotations,
             create_snapshot,
             list_snapshots,
             load_snapshot,
             validate_links,
             save_session_state,
             load_session_state,
+            document_exists,
             write_text_file,
             export_logs,
             take_pending_open_path

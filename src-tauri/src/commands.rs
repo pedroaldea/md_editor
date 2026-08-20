@@ -10,6 +10,10 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const MAX_PDF_BYTES: u64 = 256 * 1024 * 1024;
+const PDF_HEADER_SCAN_BYTES: usize = 1024;
+const MAX_PREVIEW_IMAGE_BYTES: u64 = 12 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AppErrorCode {
@@ -79,6 +83,13 @@ pub struct SavedImageAsset {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PreviewImageAsset {
+    pub mime_type: String,
+    pub base64_data: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SnapshotEntry {
     pub id: String,
     pub created_at_ms: u64,
@@ -108,6 +119,8 @@ pub struct SessionStateDto {
     pub workspace_folder: Option<String>,
     pub active_path: Option<String>,
     pub draft_content: Option<String>,
+    pub editor_active_path: Option<String>,
+    pub editor_draft_content: Option<String>,
     pub read_mode: bool,
     pub focus_mode: bool,
     pub focus_preview_only: bool,
@@ -117,20 +130,19 @@ pub struct SessionStateDto {
     pub ultra_read_fixation: f64,
     pub ultra_read_min_word_length: u32,
     pub ultra_read_focus_weight: u32,
-    pub cosmic_open: bool,
-    pub cosmic_playing: bool,
-    pub cosmic_wpm: u32,
-    pub cosmic_index: usize,
-    pub cosmic_bionic: bool,
-    pub cosmic_palette: String,
-    pub cosmic_word_size: u32,
-    pub cosmic_base_weight: u32,
-    pub cosmic_focus_weight: u32,
-    pub cosmic_fixation: f64,
-    pub cosmic_min_word_length: u32,
     pub active_block_index: usize,
     pub preview_scroll_ratio: Option<f64>,
     pub editor_scroll_ratio: Option<f64>,
+    pub editor_settings: Option<EditorSettingsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorSettingsDto {
+    pub font_size: u32,
+    pub line_numbers: bool,
+    pub word_wrap: bool,
+    pub highlight_active_line: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +244,109 @@ fn read_utf8(path: &Path) -> Result<String, AppError> {
         .map_err(|_| AppError::new(AppErrorCode::InvalidEncoding, "File must be UTF-8"))
 }
 
+fn read_pdf_bytes(path: &Path) -> Result<Vec<u8>, AppError> {
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("pdf"))
+        != Some(true)
+    {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            "Only .pdf documents can be opened by the PDF reader",
+        ));
+    }
+
+    let metadata = fs::metadata(path).map_err(|error| map_io_error(&error))?;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            AppErrorCode::FileNotFound,
+            "PDF path is not a file",
+        ));
+    }
+    if metadata.len() == 0 {
+        return Err(AppError::new(AppErrorCode::Io, "PDF file is empty"));
+    }
+    if metadata.len() > MAX_PDF_BYTES {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            format!(
+                "PDF is too large (maximum {} MB)",
+                MAX_PDF_BYTES / 1024 / 1024
+            ),
+        ));
+    }
+
+    let bytes = fs::read(path).map_err(|error| map_io_error(&error))?;
+    let header_end = bytes.len().min(PDF_HEADER_SCAN_BYTES);
+    if !bytes[..header_end]
+        .windows(b"%PDF-".len())
+        .any(|window| window == b"%PDF-")
+    {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            "File does not contain a valid PDF header",
+        ));
+    }
+
+    Ok(bytes)
+}
+
+fn preview_image_mime(path: &Path, bytes: &[u8]) -> Option<&'static str> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "png" if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => Some("image/png"),
+        "jpg" | "jpeg" if bytes.starts_with(&[0xff, 0xd8, 0xff]) => Some("image/jpeg"),
+        "gif" if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") => Some("image/gif"),
+        "webp"
+            if bytes.len() >= 12
+                && bytes.starts_with(b"RIFF")
+                && bytes.get(8..12) == Some(b"WEBP") =>
+        {
+            Some("image/webp")
+        }
+        "bmp" if bytes.starts_with(b"BM") => Some("image/bmp"),
+        "svg" => {
+            let prefix = std::str::from_utf8(bytes.get(..bytes.len().min(4096))?).ok()?;
+            if prefix.to_ascii_lowercase().contains("<svg") {
+                Some("image/svg+xml")
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn read_preview_image(path: &Path) -> Result<PreviewImageAsset, AppError> {
+    let metadata = fs::metadata(path).map_err(|error| map_io_error(&error))?;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            AppErrorCode::FileNotFound,
+            "Image path is not a file",
+        ));
+    }
+    if metadata.len() == 0 || metadata.len() > MAX_PREVIEW_IMAGE_BYTES {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            "Image is empty or exceeds the 12 MB preview limit",
+        ));
+    }
+
+    let bytes = fs::read(path).map_err(|error| map_io_error(&error))?;
+    let mime_type = preview_image_mime(path, &bytes)
+        .ok_or_else(|| AppError::new(AppErrorCode::Io, "Unsupported or invalid preview image"))?;
+
+    Ok(PreviewImageAsset {
+        mime_type: mime_type.to_string(),
+        base64_data: BASE64_STANDARD.encode(bytes),
+    })
+}
+
 fn recovery_draft_path() -> Result<PathBuf, AppError> {
     Ok(app_support_dir()?.join("recovery-draft.md"))
 }
@@ -263,6 +378,26 @@ fn session_state_path() -> Result<PathBuf, AppError> {
     Ok(app_support_dir()?.join("session.json"))
 }
 
+fn pdf_annotations_sidecar_path(path: &Path) -> Result<PathBuf, AppError> {
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("pdf"))
+        != Some(true)
+    {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            "PDF annotation storage requires a .pdf document",
+        ));
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| AppError::new(AppErrorCode::Io, "PDF path has no file name"))?;
+    Ok(path.with_file_name(format!("{file_name}.annotations.json")))
+}
+
 fn append_log(action: &str, details: &str) {
     let path = match app_log_path() {
         Ok(path) => path,
@@ -276,10 +411,7 @@ fn append_log(action: &str, details: &str) {
         return;
     }
 
-    let timestamp = match now_ms() {
-        Ok(ms) => ms,
-        Err(_) => 0,
-    };
+    let timestamp = now_ms().unwrap_or_default();
     let message = format!("[{timestamp}] {action}: {details}\n");
 
     let mut file = match OpenOptions::new().create(true).append(true).open(path) {
@@ -295,7 +427,7 @@ fn is_workspace_text_file(path: &Path) -> bool {
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(extension.as_str(), "md" | "markdown" | "txt")
+    matches!(extension.as_str(), "md" | "markdown" | "txt" | "pdf")
 }
 
 fn is_text_openable_file(path: &Path) -> bool {
@@ -315,7 +447,10 @@ fn is_image_file(path: &Path) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg")
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg"
+    )
 }
 
 fn should_skip_dir(path: &Path) -> bool {
@@ -482,7 +617,11 @@ fn ext_from_path(path: &Path) -> Option<String> {
         .map(|value| value.to_ascii_lowercase())
 }
 
-fn next_asset_path(document_path: &Path, preferred_name: &str, extension: &str) -> Result<PathBuf, AppError> {
+fn next_asset_path(
+    document_path: &Path,
+    preferred_name: &str,
+    extension: &str,
+) -> Result<PathBuf, AppError> {
     let parent = document_path
         .parent()
         .ok_or_else(|| AppError::new(AppErrorCode::Io, "Document path has no parent"))?;
@@ -808,6 +947,68 @@ pub fn write_text_file(path: String, content: String) -> Result<SaveResult, AppE
 }
 
 #[tauri::command]
+pub fn read_pdf_document(path: String) -> Result<tauri::ipc::Response, AppError> {
+    let document_path = PathBuf::from(path);
+    let bytes = read_pdf_bytes(&document_path)?;
+    append_log("read_pdf_document", &document_path.to_string_lossy());
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub fn read_image_asset(path: String) -> Result<PreviewImageAsset, AppError> {
+    let image_path = PathBuf::from(path);
+    let image = read_preview_image(&image_path)?;
+    append_log("read_image_asset", &image_path.to_string_lossy());
+    Ok(image)
+}
+
+#[tauri::command]
+pub fn load_pdf_annotations(path: String) -> Result<String, AppError> {
+    let document_path = PathBuf::from(path);
+    let sidecar_path = pdf_annotations_sidecar_path(&document_path)?;
+    if !sidecar_path.exists() {
+        return Ok(r#"{"schemaVersion":1,"annotations":[]}"#.to_string());
+    }
+
+    let raw = read_utf8(&sidecar_path)?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .map_err(|error| AppError::new(AppErrorCode::Io, error.to_string()))?;
+    append_log("load_pdf_annotations", &sidecar_path.to_string_lossy());
+    Ok(raw)
+}
+
+#[tauri::command]
+pub fn save_pdf_annotations(path: String, content: String) -> Result<(), AppError> {
+    let document_path = PathBuf::from(path);
+    let sidecar_path = pdf_annotations_sidecar_path(&document_path)?;
+    if content.len() > 5_000_000 {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            "PDF annotation sidecar is too large",
+        ));
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|error| AppError::new(AppErrorCode::Io, error.to_string()))?;
+    let schema_version = value.get("schemaVersion").and_then(|item| item.as_u64());
+    if schema_version != Some(1)
+        || value
+            .get("annotations")
+            .and_then(|item| item.as_array())
+            .is_none()
+    {
+        return Err(AppError::new(
+            AppErrorCode::Io,
+            "Invalid PDF annotation sidecar",
+        ));
+    }
+
+    atomic_write(&sidecar_path, &content)?;
+    append_log("save_pdf_annotations", &sidecar_path.to_string_lossy());
+    Ok(())
+}
+
+#[tauri::command]
 pub fn load_recovery_draft() -> Result<Option<String>, AppError> {
     let path = recovery_draft_path()?;
     append_log("load_recovery_draft", &path.to_string_lossy());
@@ -820,7 +1021,11 @@ pub fn store_recovery_draft(content: String) -> Result<(), AppError> {
     store_recovery_draft_at_path(&path, &content)?;
     append_log(
         "store_recovery_draft",
-        if content.trim().is_empty() { "clear" } else { "write" },
+        if content.trim().is_empty() {
+            "clear"
+        } else {
+            "write"
+        },
     );
     Ok(())
 }
@@ -909,7 +1114,10 @@ pub fn search_workspace(
         });
     }
 
-    append_log("search_workspace", &format!("query={query}; hits={}", hits.len()));
+    append_log(
+        "search_workspace",
+        &format!("query={query}; hits={}", hits.len()),
+    );
     Ok(hits)
 }
 
@@ -960,7 +1168,10 @@ pub fn save_image_asset(
 }
 
 #[tauri::command]
-pub fn import_image_asset(document_path: String, source_path: String) -> Result<SavedImageAsset, AppError> {
+pub fn import_image_asset(
+    document_path: String,
+    source_path: String,
+) -> Result<SavedImageAsset, AppError> {
     let document_path = PathBuf::from(document_path);
     let source_path = PathBuf::from(source_path);
 
@@ -991,7 +1202,11 @@ pub fn import_image_asset(document_path: String, source_path: String) -> Result<
 }
 
 #[tauri::command]
-pub fn create_snapshot(path: String, content: String, reason: String) -> Result<SnapshotEntry, AppError> {
+pub fn create_snapshot(
+    path: String,
+    content: String,
+    reason: String,
+) -> Result<SnapshotEntry, AppError> {
     if path.trim().is_empty() {
         return Err(AppError::new(AppErrorCode::Io, "Snapshot path is empty"));
     }
@@ -1011,15 +1226,16 @@ pub fn create_snapshot(path: String, content: String, reason: String) -> Result<
             });
         }
 
-        if reason == "autosave" && last.reason == "autosave" {
-            if now.saturating_sub(last.created_at_ms) < 60_000 {
-                return Ok(SnapshotEntry {
-                    id: last.id.clone(),
-                    created_at_ms: last.created_at_ms,
-                    reason: last.reason.clone(),
-                    size_bytes: last.size_bytes,
-                });
-            }
+        if reason == "autosave"
+            && last.reason == "autosave"
+            && now.saturating_sub(last.created_at_ms) < 60_000
+        {
+            return Ok(SnapshotEntry {
+                id: last.id.clone(),
+                created_at_ms: last.created_at_ms,
+                reason: last.reason.clone(),
+                size_bytes: last.size_bytes,
+            });
         }
     }
 
@@ -1030,7 +1246,7 @@ pub fn create_snapshot(path: String, content: String, reason: String) -> Result<
     let snapshot_file = snapshot_folder.join(format!("{}.mdsnap", snapshot_id));
     atomic_write(&snapshot_file, &content)?;
 
-    let size_bytes = content.as_bytes().len() as u64;
+    let size_bytes = content.len() as u64;
     records.push(SnapshotRecord {
         id: snapshot_id.clone(),
         created_at_ms: now,
@@ -1083,7 +1299,10 @@ pub fn list_snapshots(path: String) -> Result<Vec<SnapshotEntry>, AppError> {
 pub fn load_snapshot(path: String, snapshot_id: String) -> Result<OpenDocumentResult, AppError> {
     let index = load_history_index()?;
     let records = index.files.get(&path).ok_or_else(|| {
-        AppError::new(AppErrorCode::FileNotFound, "No snapshots available for this document")
+        AppError::new(
+            AppErrorCode::FileNotFound,
+            "No snapshots available for this document",
+        )
     })?;
 
     let record = records
@@ -1139,7 +1358,8 @@ pub fn validate_links(
                     line,
                     link: link.clone(),
                     severity: "warning".to_string(),
-                    message: "External URL did not respond to a quick reachability check".to_string(),
+                    message: "External URL did not respond to a quick reachability check"
+                        .to_string(),
                 });
             }
             continue;
@@ -1220,6 +1440,11 @@ pub fn load_session_state() -> Result<Option<SessionStateDto>, AppError> {
 }
 
 #[tauri::command]
+pub fn document_exists(path: String) -> bool {
+    Path::new(&path).is_file()
+}
+
+#[tauri::command]
 pub fn export_logs(destination_path: String) -> Result<(), AppError> {
     let source = app_log_path()?;
     let destination = PathBuf::from(destination_path);
@@ -1262,6 +1487,22 @@ mod tests {
     }
 
     #[test]
+    fn reports_document_existence_without_opening_it() {
+        let temp_dir = tempdir().expect("temp dir");
+        let file_path = temp_dir.path().join("exists.pdf");
+        fs::write(&file_path, b"%PDF-1.4").expect("write fixture");
+
+        assert!(document_exists(file_path.to_string_lossy().to_string()));
+        assert!(!document_exists(
+            temp_dir
+                .path()
+                .join("missing.pdf")
+                .to_string_lossy()
+                .to_string()
+        ));
+    }
+
+    #[test]
     fn rejects_conflicting_save() {
         let temp_dir = tempdir().expect("temp dir");
         let file_path = temp_dir.path().join("conflict.md");
@@ -1293,7 +1534,152 @@ mod tests {
     }
 
     #[test]
-    fn lists_workspace_text_files_in_folder() {
+    fn session_payload_preserves_editor_context_and_settings() {
+        let raw = r#"{
+          "workspaceFolder": null,
+          "activePath": "/tmp/report.pdf",
+          "draftContent": null,
+          "editorActivePath": "/tmp/notes.md",
+          "editorDraftContent": "unsaved editor text",
+          "readMode": false,
+          "focusMode": false,
+          "focusPreviewOnly": false,
+          "splitRatio": 0.542,
+          "readerPalette": "void",
+          "ultraReadEnabled": false,
+          "ultraReadFixation": 0.45,
+          "ultraReadMinWordLength": 4,
+          "ultraReadFocusWeight": 760,
+          "activeBlockIndex": 0,
+          "previewScrollRatio": 0.2,
+          "editorScrollRatio": 0.1,
+          "editorSettings": {
+            "fontSize": 17,
+            "lineNumbers": false,
+            "wordWrap": true,
+            "highlightActiveLine": false
+          }
+        }"#;
+
+        let state: SessionStateDto = serde_json::from_str(raw).expect("deserialize session");
+        assert_eq!(state.editor_active_path.as_deref(), Some("/tmp/notes.md"));
+        assert_eq!(
+            state.editor_draft_content.as_deref(),
+            Some("unsaved editor text")
+        );
+        assert_eq!(
+            state.editor_settings,
+            Some(EditorSettingsDto {
+                font_size: 17,
+                line_numbers: false,
+                word_wrap: true,
+                highlight_active_line: false
+            })
+        );
+
+        let encoded = serde_json::to_value(state).expect("serialize session");
+        assert_eq!(encoded["editorActivePath"], "/tmp/notes.md");
+        assert_eq!(encoded["editorSettings"]["fontSize"], 17);
+    }
+
+    #[test]
+    fn pdf_annotation_sidecar_roundtrip() {
+        let temp_dir = tempdir().expect("temp dir");
+        let pdf_path = temp_dir.path().join("report.pdf");
+        fs::write(&pdf_path, b"%PDF-1.7").expect("write pdf");
+        let payload = r#"{"schemaVersion":1,"annotations":[{"id":"a","pageNumber":1,"kind":"highlight","quote":"hello","rects":[{"left":0,"top":0,"width":0.2,"height":0.05}],"createdAt":"2026-08-19T00:00:00.000Z"}]}"#;
+
+        save_pdf_annotations(pdf_path.to_string_lossy().to_string(), payload.to_string())
+            .expect("save annotations");
+        let loaded =
+            load_pdf_annotations(pdf_path.to_string_lossy().to_string()).expect("load annotations");
+
+        assert_eq!(loaded, payload);
+        assert!(pdf_path
+            .with_file_name("report.pdf.annotations.json")
+            .exists());
+    }
+
+    #[test]
+    fn pdf_annotation_sidecar_rejects_non_pdf_paths() {
+        let error = load_pdf_annotations("/tmp/report.md".to_string()).expect_err("reject md");
+        assert_eq!(error.code, AppErrorCode::Io);
+    }
+
+    #[test]
+    fn reads_validated_pdf_bytes_without_asset_protocol_scope() {
+        let temp_dir = tempdir().expect("temp dir");
+        let pdf_path = temp_dir.path().join("outside-home.pdf");
+        let payload = b"leading-comment\n%PDF-1.7\nfixture";
+        fs::write(&pdf_path, payload).expect("write pdf fixture");
+
+        let bytes = read_pdf_bytes(&pdf_path).expect("read validated PDF");
+
+        assert_eq!(bytes, payload);
+    }
+
+    #[test]
+    fn rejects_files_without_a_pdf_header() {
+        let temp_dir = tempdir().expect("temp dir");
+        let pdf_path = temp_dir.path().join("not-really.pdf");
+        fs::write(&pdf_path, b"plain text").expect("write invalid fixture");
+
+        let error = read_pdf_bytes(&pdf_path).expect_err("reject invalid PDF");
+
+        assert_eq!(error.code, AppErrorCode::Io);
+        assert!(error.message.contains("valid PDF header"));
+    }
+
+    #[test]
+    fn rejects_pdf_files_over_the_reader_limit_before_reading_them() {
+        let temp_dir = tempdir().expect("temp dir");
+        let pdf_path = temp_dir.path().join("oversized.pdf");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&pdf_path)
+            .expect("create sparse PDF");
+        file.set_len(MAX_PDF_BYTES + 1).expect("size sparse PDF");
+
+        let error = read_pdf_bytes(&pdf_path).expect_err("reject oversized PDF");
+
+        assert_eq!(error.code, AppErrorCode::Io);
+        assert!(error.message.contains("too large"));
+    }
+
+    #[test]
+    fn reads_validated_preview_images_outside_the_asset_scope() {
+        let temp_dir = tempdir().expect("temp dir");
+        let image_path = temp_dir.path().join("preview.png");
+        let payload = b"\x89PNG\r\n\x1a\nfixture";
+        fs::write(&image_path, payload).expect("write image fixture");
+
+        let image = read_preview_image(&image_path).expect("read image");
+
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(
+            BASE64_STANDARD
+                .decode(image.base64_data)
+                .expect("decode image"),
+            payload
+        );
+    }
+
+    #[test]
+    fn rejects_disguised_preview_images() {
+        let temp_dir = tempdir().expect("temp dir");
+        let image_path = temp_dir.path().join("not-an-image.png");
+        fs::write(&image_path, b"private plain text").expect("write invalid fixture");
+
+        let error = read_preview_image(&image_path).expect_err("reject invalid image");
+
+        assert_eq!(error.code, AppErrorCode::Io);
+        assert!(error.message.contains("Unsupported or invalid"));
+    }
+
+    #[test]
+    fn lists_workspace_documents_in_folder() {
         let temp_dir = tempdir().expect("temp dir");
         let folder = temp_dir.path();
 
@@ -1301,17 +1687,22 @@ mod tests {
         let nested_dir = folder.join("docs");
         let nested_file = nested_dir.join("guide.markdown");
         let note_file = folder.join("notes.txt");
+        let pdf_file = folder.join("report.pdf");
 
         fs::create_dir_all(&nested_dir).expect("create nested dir");
         fs::write(root_file, "root").expect("write root");
         fs::write(nested_file, "nested").expect("write nested");
         fs::write(note_file, "note").expect("write note");
+        fs::write(pdf_file, b"%PDF-1.4").expect("write pdf placeholder");
 
         let files = list_markdown_files(folder.to_string_lossy().to_string()).expect("list files");
-        assert_eq!(files.len(), 3);
+        assert_eq!(files.len(), 4);
         assert!(files.iter().any(|file| file.relative_path == "README.md"));
-        assert!(files.iter().any(|file| file.relative_path == "docs/guide.markdown"));
+        assert!(files
+            .iter()
+            .any(|file| file.relative_path == "docs/guide.markdown"));
         assert!(files.iter().any(|file| file.relative_path == "notes.txt"));
+        assert!(files.iter().any(|file| file.relative_path == "report.pdf"));
     }
 
     #[test]
@@ -1374,9 +1765,11 @@ mod tests {
         let path = "/tmp/fake.md".to_string();
         let mut permission_denied = false;
         for index in 0..55 {
-            if let Err(error) =
-                create_snapshot(path.clone(), format!("content-{index}"), "manual".to_string())
-            {
+            if let Err(error) = create_snapshot(
+                path.clone(),
+                format!("content-{index}"),
+                "manual".to_string(),
+            ) {
                 if error.code == AppErrorCode::PermissionDenied {
                     permission_denied = true;
                     break;
