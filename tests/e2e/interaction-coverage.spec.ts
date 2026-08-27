@@ -126,13 +126,26 @@ test("edits a Markdown table through the contextual mini toolbar", async ({ page
 
 test("opens the export UI and completes the browser PDF print flow", async ({ page }) => {
   await page.addInitScript(() => {
-    const testWindow = window as Window & { __mdEditorPrintCalls?: number };
+    const testWindow = window as Window & {
+      __mdEditorPrintCalls?: number;
+      __mdEditorPrintSurface?: { ready: string | undefined; text: string; title: string };
+    };
     testWindow.__mdEditorPrintCalls = 0;
     window.print = () => {
       testWindow.__mdEditorPrintCalls = (testWindow.__mdEditorPrintCalls ?? 0) + 1;
+      const surface = document.querySelector<HTMLElement>(".pdf-export-surface");
+      if (surface) {
+        testWindow.__mdEditorPrintSurface = {
+          ready: surface.dataset.pdfExportReady,
+          text: surface.innerText,
+          title: document.title
+        };
+      }
     };
   });
   await page.goto("/");
+  await page.locator(".cm-content").click();
+  await page.keyboard.insertText("# Export body\n\nOnly this article belongs in the PDF.");
 
   await page.locator(".top-more > summary").click();
   await page.getByRole("button", { name: "Export", exact: true }).click();
@@ -154,6 +167,17 @@ test("opens the export UI and completes the browser PDF print flow", async ({ pa
   await expect(page.locator(".top-status")).toContainText(
     "Opened print dialog. Choose Save as PDF."
   );
+  const capturedSurface = await page.evaluate(
+    () =>
+      (window as Window & { __mdEditorPrintSurface?: unknown }).__mdEditorPrintSurface
+  );
+  expect(capturedSurface).toMatchObject({
+    ready: "true",
+    title: "Untitled"
+  });
+  expect((capturedSurface as { text: string }).text).toContain("Only this article belongs");
+  expect((capturedSurface as { text: string }).text).not.toContain("COMMAND");
+  await expect(page.locator(".pdf-export-surface")).toHaveCount(0);
   await expect(page.locator("html")).not.toHaveClass(/pdf-exporting/u);
 });
 
@@ -173,6 +197,22 @@ test.describe("mobile touch interactions", () => {
     const dialog = page.getByRole("dialog", { name: "Untitled.md" });
     await expect(dialog).toBeVisible();
     await expect(dialog.locator(".quick-read-word")).toHaveAttribute("aria-label", "One");
+    const increaseText = dialog.getByRole("button", { name: "Increase Quick Read text size" });
+    await expect(increaseText).toBeVisible();
+    await increaseText.tap();
+    await expect(dialog.locator(".quick-read-text-size output")).toHaveText("110%");
+    await expect
+      .poll(() =>
+        dialog.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            rect.left >= 0 &&
+            rect.right <= window.innerWidth &&
+            element.scrollWidth <= element.clientWidth
+          );
+        })
+      )
+      .toBe(true);
     await dialog.getByRole("button", { name: "Play reading" }).tap();
     await expect(dialog.getByRole("button", { name: "Pause reading" })).toBeVisible();
     await dialog.getByRole("button", { name: "Close quick reader" }).tap();

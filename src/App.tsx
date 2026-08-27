@@ -1038,8 +1038,17 @@ export default function App() {
     async (profile: ExportProfile) => {
       setExportOpen(false);
 
+      const defaultBase = (document.path?.split("/").pop() ?? "Untitled").replace(/\.[^/.]+$/u, "");
+
       if (profile === "pdf-print") {
-        const opened = await runPdfPrint();
+        const exportHtml = renderMarkdown(document.content).html;
+        const opened = await runPdfPrint(undefined, window.document.documentElement, {
+          title: defaultBase,
+          requireSurface: true,
+          html: exportHtml,
+          resolveImageSource: resolvePreviewImage,
+          loadImageFallback: loadPreviewImageFallback
+        });
         if (opened) {
           setStatus("Opened print dialog. Choose Save as PDF.");
           setError(null);
@@ -1052,8 +1061,6 @@ export default function App() {
         }
         return;
       }
-
-      const defaultBase = (document.path?.split("/").pop() ?? "Untitled").replace(/\.[^/.]+$/u, "");
 
       if (profile === "clean-markdown") {
         const selected = await saveDialog({
@@ -1101,7 +1108,16 @@ export default function App() {
         }
       }
     },
-    [document.content, document.path, rendered.html, setError, setStatus]
+    [
+      document.content,
+      document.path,
+      loadPreviewImageFallback,
+      rendered.html,
+      resolvePreviewImage,
+      setError,
+      setStatus,
+      ultraRead
+    ]
   );
 
   const formatTables = useCallback(() => {

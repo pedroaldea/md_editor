@@ -71,6 +71,7 @@ test.describe("ASCII minimalist redesign", () => {
     await page.setViewportSize({ width: 1144, height: 768 });
     await page.goto("/");
     await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(page.locator(".cm-content")).toBeVisible();
 
     const editGeometry = await page.locator(".editor-layout").evaluate((layout) => {
       const layoutRect = layout.getBoundingClientRect();

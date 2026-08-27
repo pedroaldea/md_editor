@@ -250,20 +250,38 @@ test("jumps to headings while the editor is hidden in read mode", async ({ page 
 test("opens quick read and supports keyboard stepping", async ({ page }) => {
   await page.goto("/");
   await focusEditor(page);
-  await page.keyboard.insertText("One two three");
+  await page.keyboard.insertText("Curso two three");
 
   await page.locator(".top-more > summary").click();
   await page.getByRole("button", { name: "Quick read" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".quick-read-word")).toHaveText("One");
+  await expect(dialog.locator(".quick-read-word")).toHaveText("Curso");
 
+  const word = dialog.locator(".quick-read-word");
+  const initialFontSize = await word.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).fontSize)
+  );
+  await dialog.getByRole("button", { name: "Increase Quick Read text size" }).click();
+  await expect(dialog.locator(".quick-read-text-size output")).toHaveText("110%");
+  await expect
+    .poll(() => word.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)))
+    .toBeGreaterThan(initialFontSize);
+  const segmentTops = await word.locator("span").evaluateAll((segments) =>
+    segments.map((segment) => Math.round(segment.getBoundingClientRect().top))
+  );
+  expect(Math.max(...segmentTops) - Math.min(...segmentTops)).toBeLessThanOrEqual(1);
+
+  await dialog.focus();
   await page.keyboard.press("ArrowRight");
   await expect(dialog.locator(".quick-read-word")).toHaveText("two");
   await page.keyboard.press("Space");
   await expect(dialog.getByRole("button", { name: "Pause reading" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+
+  await page.getByRole("button", { name: "Quick read" }).click();
+  await expect(page.getByRole("dialog").locator(".quick-read-text-size output")).toHaveText("110%");
 });
 
 test("keeps app context when local preview links are clicked", async ({ page }) => {
@@ -277,7 +295,7 @@ test("keeps app context when local preview links are clicked", async ({ page }) 
   await expect.poll(() => page.url()).toBe(currentUrl);
 });
 
-test("expands preview into a printable flow for PDF export", async ({ page }) => {
+test("isolates a document-only printable flow for PDF export", async ({ page }) => {
   await page.goto("/");
   await focusEditor(page);
 
@@ -292,38 +310,51 @@ test("expands preview into a printable flow for PDF export", async ({ page }) =>
 
   await page.keyboard.insertText(longDocument);
   await page.emulateMedia({ media: "print" });
-
-  const printLayout = await page.evaluate(() => {
-    document.documentElement.classList.add("pdf-exporting");
-
-    const editor = document.querySelector<HTMLElement>(".pane-editor");
-    const preview = document.querySelector<HTMLElement>(".preview-pane");
-    const previewPane = document.querySelector<HTMLElement>(".pane-preview");
-    const workspace = document.querySelector<HTMLElement>(".workspace-shell");
-
-    if (!editor || !preview || !previewPane || !workspace) {
-      return null;
-    }
-
-    const editorStyle = getComputedStyle(editor);
-    const previewStyle = getComputedStyle(preview);
-    const paneStyle = getComputedStyle(previewPane);
-    const workspaceStyle = getComputedStyle(workspace);
-
-    return {
-      editorDisplay: editorStyle.display,
-      previewOverflow: previewStyle.overflow,
-      previewMaxHeight: previewStyle.maxHeight,
-      paneOverflow: paneStyle.overflow,
-      workspaceDisplay: workspaceStyle.display
+  await page.evaluate(() => {
+    const testWindow = window as Window & {
+      __mdEditorPrintLayout?: {
+        rootDisplay: string;
+        surfaceDisplay: string;
+        surfaceReady: string | undefined;
+        surfaceText: string;
+      };
+    };
+    window.print = () => {
+      const root = document.querySelector<HTMLElement>("#root");
+      const surface = document.querySelector<HTMLElement>(".pdf-export-surface");
+      if (!root || !surface) return;
+      testWindow.__mdEditorPrintLayout = {
+        rootDisplay: getComputedStyle(root).display,
+        surfaceDisplay: getComputedStyle(surface).display,
+        surfaceReady: surface.dataset.pdfExportReady,
+        surfaceText: surface.innerText
+      };
     };
   });
 
-  expect(printLayout).toEqual({
-    editorDisplay: "none",
-    previewOverflow: "visible",
-    previewMaxHeight: "none",
-    paneOverflow: "visible",
-    workspaceDisplay: "block"
+  await page.locator(".top-more > summary").click();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("button", { name: "PDF (Print)", exact: true }).click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => Boolean((window as Window & { __mdEditorPrintLayout?: unknown }).__mdEditorPrintLayout)
+      )
+    )
+    .toBe(true);
+  const printLayout = await page.evaluate(
+    () => (window as Window & { __mdEditorPrintLayout?: unknown }).__mdEditorPrintLayout
+  );
+  expect(printLayout).toMatchObject({
+    rootDisplay: "none",
+    surfaceDisplay: "block",
+    surfaceReady: "true"
   });
+  expect((printLayout as { surfaceText: string }).surfaceText).toContain("Print check");
+  expect((printLayout as { surfaceText: string }).surfaceText).toContain("Paragraph 60");
+  expect((printLayout as { surfaceText: string }).surfaceText).not.toContain("LIBRARY");
+  expect((printLayout as { surfaceText: string }).surfaceText).not.toContain("INSERT");
+  await expect(page.locator(".pdf-export-surface")).toHaveCount(0);
+  await expect(page.locator("html")).not.toHaveClass(/pdf-exporting/u);
 });

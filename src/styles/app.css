@@ -2818,43 +2818,238 @@ input[type="range"] {
   .modal-card { max-height: calc(100dvh - 16px); }
 }
 
-@media print {
-  body { overflow: visible; background: white; }
-  .app-shell { display: block; height: auto; padding: 0; background: white; }
-  .top-bar,
-  .file-sidebar,
-  .focus-floating-controls,
-  .modal-overlay,
-  .pane-label { display: none !important; }
-  .workspace-shell,
-  .editor-layout,
-  .pane-preview { display: block !important; height: auto; overflow: visible; border: 0; box-shadow: none; }
-  .pane-editor,
-  .pane-divider { display: none !important; }
-  .preview-pane { overflow: visible; }
-  .preview-content { width: auto; max-width: none; padding: 0; color: #111; font-size: 11pt; }
-  .preview-content pre,
-  .preview-content table { break-inside: avoid; }
-  .preview-content h1,
-  .preview-content h2,
-  .preview-content h3,
-  .preview-content h4,
-  .preview-content h5,
-  .preview-content h6 { break-after: avoid; }
+.pdf-export-surface {
+  position: fixed;
+  top: 0;
+  left: -200vw;
+  width: 180mm;
+  height: auto;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.pdf-exporting .pane-editor,
-.pdf-exporting .pane-divider,
-.pdf-exporting .top-bar,
-.pdf-exporting .file-sidebar,
-.pdf-exporting .focus-floating-controls { display: none !important; }
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 16mm 15mm 18mm;
+  }
 
-.pdf-exporting .workspace-shell,
-.pdf-exporting .editor-layout,
-.pdf-exporting .pane-preview { display: block !important; height: auto; overflow: visible; border: 0; box-shadow: none; }
+  html.pdf-exporting,
+  html.pdf-exporting body {
+    width: auto;
+    height: auto;
+    min-height: 0;
+    overflow: visible !important;
+    background: #fff !important;
+  }
 
-.pdf-exporting .preview-pane { max-height: none; overflow: visible; }
-.pdf-exporting .preview-content { width: auto; max-width: none; padding: 0; }
+  /* Export a prepared document, never the live application shell. This single
+     boundary excludes rails, menus, toolbars, modals, editors and status bars
+     even when one of them was open at the moment the user chose PDF. */
+  html.pdf-exporting body > :not(.pdf-export-surface) {
+    display: none !important;
+  }
+
+  html.pdf-exporting body > .pdf-export-surface.preview-content {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto;
+    background: #fff !important;
+    color: #1b1b1b !important;
+    font-family: "IBM Plex Sans", "Avenir Next", Arial, sans-serif !important;
+    font-size: 10.5pt !important;
+    line-height: 1.55 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .pdf-export-surface h1,
+  .pdf-export-surface h2,
+  .pdf-export-surface h3,
+  .pdf-export-surface h4,
+  .pdf-export-surface h5,
+  .pdf-export-surface h6,
+  .pdf-export-surface p,
+  .pdf-export-surface li,
+  .pdf-export-surface strong,
+  .pdf-export-surface em,
+  .pdf-export-surface blockquote,
+  .pdf-export-surface th,
+  .pdf-export-surface td {
+    color: #1b1b1b !important;
+  }
+
+  .pdf-export-surface h1,
+  .pdf-export-surface h2,
+  .pdf-export-surface h3,
+  .pdf-export-surface h4,
+  .pdf-export-surface h5,
+  .pdf-export-surface h6 {
+    break-after: avoid-page;
+    break-inside: avoid-page;
+    font-family: "IBM Plex Sans", "Avenir Next", Arial, sans-serif !important;
+    line-height: 1.18 !important;
+  }
+
+  .pdf-export-surface h1 {
+    margin: 0 0 0.55em !important;
+    font-size: 25pt !important;
+  }
+
+  .pdf-export-surface h2 {
+    margin: 1.55em 0 0.55em !important;
+    font-size: 17pt !important;
+  }
+
+  .pdf-export-surface h3 {
+    margin: 1.35em 0 0.45em !important;
+    font-size: 13.5pt !important;
+  }
+
+  .pdf-export-surface p,
+  .pdf-export-surface li {
+    orphans: 3;
+    widows: 3;
+  }
+
+  .pdf-export-surface a {
+    color: #174f9b !important;
+    text-decoration-thickness: 0.75pt;
+    text-underline-offset: 2px;
+  }
+
+  .pdf-export-surface blockquote,
+  .pdf-export-surface .callout {
+    margin: 1.15em 0 !important;
+    padding: 0.15em 0 0.15em 1em !important;
+    border: 0 !important;
+    border-left: 2pt solid #9a9a96 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .pdf-export-surface pre {
+    max-width: 100%;
+    margin: 1.15em 0 !important;
+    padding: 10pt 11pt !important;
+    overflow: visible !important;
+    border: 0.75pt solid #c9c9c4 !important;
+    background: #f5f5f2 !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere;
+    break-inside: auto;
+  }
+
+  .pdf-export-surface pre,
+  .pdf-export-surface pre * {
+    color: #202020 !important;
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace !important;
+    font-size: 8.5pt !important;
+    line-height: 1.45 !important;
+  }
+
+  .pdf-export-surface table {
+    width: 100% !important;
+    max-width: 100% !important;
+    display: table !important;
+    margin: 1.15em 0 !important;
+    overflow: visible !important;
+    border-collapse: collapse !important;
+    table-layout: auto;
+  }
+
+  .pdf-export-surface thead {
+    display: table-header-group;
+  }
+
+  .pdf-export-surface tr {
+    break-inside: avoid-page;
+  }
+
+  .pdf-export-surface th,
+  .pdf-export-surface td {
+    padding: 6pt 7pt !important;
+    border: 0.75pt solid #c9c9c4 !important;
+    background: transparent !important;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .pdf-export-surface th {
+    background: #f1f1ee !important;
+  }
+
+  .pdf-export-surface img,
+  .pdf-export-surface figure,
+  .pdf-export-surface .mermaid-diagram {
+    max-width: 100% !important;
+    break-inside: avoid-page;
+  }
+
+  .pdf-export-surface img {
+    max-height: 235mm !important;
+    object-fit: contain;
+  }
+
+  .pdf-export-surface a,
+  .pdf-export-surface :not(pre) > code {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .pdf-export-surface .mermaid-diagram {
+    margin: 1.35em 0 !important;
+    padding: 10pt 0 !important;
+    overflow: visible !important;
+    border-block: 0.75pt solid #d1d1cc !important;
+    background: #fff !important;
+  }
+
+  .pdf-export-surface .mermaid-canvas {
+    min-height: 0 !important;
+    color: #555 !important;
+  }
+
+  .pdf-export-surface .mermaid-canvas svg {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: 220mm !important;
+  }
+
+  .pdf-export-surface mark,
+  .pdf-export-surface .inline-highlight {
+    background: #fff0a8 !important;
+    color: #1b1b1b !important;
+  }
+
+  .pdf-export-surface hr {
+    margin: 1.5em 0 !important;
+    border: 0 !important;
+    border-top: 0.75pt solid #b8b8b3 !important;
+  }
+
+  .pdf-export-image-error {
+    display: block;
+    margin: 1em 0;
+    padding: 9pt 10pt;
+    border: 0.75pt dashed #999;
+    color: #555 !important;
+    font: 8.5pt/1.4 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    break-inside: avoid-page;
+  }
+}
 
 /* One-surface modes must occupy the complete workspace grid. */
 .editor-layout.is-focus-surface,

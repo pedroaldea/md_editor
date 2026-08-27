@@ -2,7 +2,9 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import QuickReadOverlay from "../../src/components/QuickReadOverlay";
+import QuickReadOverlay, {
+  QUICK_READ_FONT_SCALE_STORAGE_KEY
+} from "../../src/components/QuickReadOverlay";
 
 const mountOverlay = (props: Partial<React.ComponentProps<typeof QuickReadOverlay>> = {}) => {
   const host = document.createElement("div");
@@ -50,6 +52,7 @@ afterAll(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  window.localStorage.removeItem(QUICK_READ_FONT_SCALE_STORAGE_KEY);
 });
 
 describe("QuickReadOverlay", () => {
@@ -59,7 +62,7 @@ describe("QuickReadOverlay", () => {
       expect(host.querySelector('[role="dialog"]')).not.toBeNull();
       expect(host.querySelector(".quick-read-word")?.textContent).toBe("First");
       expect(host.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("1");
-      expect(host.querySelector("output")?.textContent).toBe("420 WPM");
+      expect(host.querySelector(".quick-read-speed output")?.textContent).toBe("420 WPM");
       expect(host.querySelector('input[type="range"]')?.getAttribute("aria-label")).toBe(
         "Words per minute"
       );
@@ -108,6 +111,83 @@ describe("QuickReadOverlay", () => {
       expect(onClose).toHaveBeenCalledTimes(3);
     } finally {
       unmount();
+    }
+  });
+
+  it("resizes the reading word with buttons and keyboard and persists the choice", () => {
+    const firstMount = mountOverlay();
+    try {
+      const word = firstMount.host.querySelector<HTMLElement>(".quick-read-word");
+      const sizeOutput = firstMount.host.querySelector<HTMLOutputElement>(
+        '.quick-read-text-size output'
+      );
+      expect(sizeOutput?.textContent).toBe("100%");
+      expect(word?.style.getPropertyValue("--quick-read-font-max")).toBe("88px");
+
+      const increase = firstMount.host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Increase Quick Read text size"]'
+      );
+      act(() => increase?.click());
+      expect(sizeOutput?.textContent).toBe("110%");
+      expect(word?.style.getPropertyValue("--quick-read-font-max")).toBe("96.8px");
+
+      const overlay = firstMount.host.querySelector<HTMLElement>(".quick-read-overlay");
+      act(() =>
+        overlay?.dispatchEvent(new KeyboardEvent("keydown", { key: "]", bubbles: true }))
+      );
+      expect(sizeOutput?.textContent).toBe("120%");
+      expect(window.localStorage.getItem(QUICK_READ_FONT_SCALE_STORAGE_KEY)).toBe("120");
+    } finally {
+      firstMount.unmount();
+    }
+
+    const secondMount = mountOverlay();
+    try {
+      expect(
+        secondMount.host.querySelector<HTMLOutputElement>('.quick-read-text-size output')
+          ?.textContent
+      ).toBe("120%");
+      const decrease = secondMount.host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Decrease Quick Read text size"]'
+      );
+      act(() => decrease?.click());
+      expect(window.localStorage.getItem(QUICK_READ_FONT_SCALE_STORAGE_KEY)).toBe("110");
+    } finally {
+      secondMount.unmount();
+    }
+  });
+
+  it("clamps stored text sizes and disables controls at both limits", () => {
+    window.localStorage.setItem(QUICK_READ_FONT_SCALE_STORAGE_KEY, "999");
+    const maximumMount = mountOverlay();
+    try {
+      expect(
+        maximumMount.host.querySelector<HTMLOutputElement>('.quick-read-text-size output')
+          ?.textContent
+      ).toBe("150%");
+      expect(
+        maximumMount.host.querySelector<HTMLButtonElement>(
+          'button[aria-label="Increase Quick Read text size"]'
+        )?.disabled
+      ).toBe(true);
+    } finally {
+      maximumMount.unmount();
+    }
+
+    window.localStorage.setItem(QUICK_READ_FONT_SCALE_STORAGE_KEY, "1");
+    const minimumMount = mountOverlay();
+    try {
+      expect(
+        minimumMount.host.querySelector<HTMLOutputElement>('.quick-read-text-size output')
+          ?.textContent
+      ).toBe("70%");
+      expect(
+        minimumMount.host.querySelector<HTMLButtonElement>(
+          'button[aria-label="Decrease Quick Read text size"]'
+        )?.disabled
+      ).toBe(true);
+    } finally {
+      minimumMount.unmount();
     }
   });
 });

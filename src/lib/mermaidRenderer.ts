@@ -1,6 +1,7 @@
 import type { ThemeMode } from "../types/app";
 
 let diagramSequence = 0;
+let mermaidRenderQueue: Promise<void> = Promise.resolve();
 
 export interface PreparedMermaidSource {
   source: string;
@@ -222,4 +223,12 @@ export const renderMermaidDiagrams = (
   root: HTMLElement,
   themeMode: ThemeMode,
   signal?: AbortSignal
-): Promise<void> => renderDiagrams(root, themeMode, signal);
+): Promise<void> => {
+  // Mermaid keeps shared renderer configuration. Preview lazy-rendering and a
+  // user-triggered PDF export can otherwise initialize/render concurrently,
+  // leaving one of the SVGs empty in the print snapshot. Serialize requests;
+  // each caller still receives its own completion promise.
+  const request = mermaidRenderQueue.then(() => renderDiagrams(root, themeMode, signal));
+  mermaidRenderQueue = request.catch(() => undefined);
+  return request;
+};

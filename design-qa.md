@@ -35,6 +35,8 @@
 - Mobile slash sheet: `docs/qa/current-mobile-light-slash.png`
 - Browser PDF desktop/mobile: `docs/qa/current-pdf-desktop.png`, `docs/qa/current-pdf-mobile.png`
 - Native DMG PDF and persisted highlight: `docs/qa/current-native-final-pdf.png`, `docs/qa/current-native-final-pdf-annotated.png`
+- Quick Read sizing: `docs/qa/current-quick-read-font-100.png`, `docs/qa/current-quick-read-font-130.png`, `docs/qa/current-quick-read-font-mobile-140.png`, and exact-DMG WebKit `docs/qa/current-native-quick-read-font-110.png`
+- Native Markdown-to-PDF export: `docs/qa/current-native-pdf-export-document-only.png`; saved artifact: `docs/qa/current-native-pdf-export-proof.pdf`
 - Extension proof: `/private/tmp/md-editor-slash-expanded.png`, `/private/tmp/md-editor-table-toolbar.png`, `/private/tmp/md-editor-final-native-redact.png`
 - Focused crops were required because toolbar text, editor line length, and popup density were too small to judge reliably in the 2974 px-wide combined image.
 
@@ -62,7 +64,8 @@
 - PDF render, selectable text, zoom, fit-width mobile behavior, highlight, underline, opaque redaction, privacy-preserving sidecar quote, removal, persistence, corrupt-file state and native WebKit path: passed.
 - Mobile 320, 390 and 430 px plus desktop overflow checks: passed.
 - Initial load and theme/Edit/Split/Read transitions: passed the frame-bounded performance smoke five consecutive times.
-- Final Playwright matrix: 73/73 scenarios passed; product console/error assertions remained clean.
+- Quick Read `A− / A+`, 70–150% bounds, `[` / `]`, persistence, 44 px touch targets and 390 px containment: passed. The final DMG also exposed the controls through macOS accessibility and restored the saved 110% value.
+- Final Playwright matrix: 74/74 scenarios passed; product console/error assertions remained clean.
 
 ## Extension QA — 2026-08-20
 
@@ -79,9 +82,20 @@
 - Mermaid: fenced `mermaid` blocks render in light/dark, redraw on theme change, support labels containing literal `\\n`, expose `/diagram`, and show a bounded error for invalid source. WebKit lays out labelled dotted feedback as a temporary solid edge, then the generated SVG restores its dotted stroke. The preview memoizes injected HTML so scroll-progress rerenders cannot wipe the SVG. Evidence: `/private/tmp/md-editor-mermaid-read.png` and final native `/private/tmp/md-editor-final-native-media.png`.
 - Lightweight behavior: Mermaid is dynamically imported and rendered only when a diagram is near the viewport; the production entry does not preload its renderer or flowchart chunks. Production build and diff check pass.
 - Edit layout: the standalone editor now centers its line-number gutter and a 96ch source column as one 980 px writing desk. At the exact reported 1144 px window width the editable column is at least 840 px, outer gaps are balanced within 4 px, the page has no horizontal overflow, and Split remains narrower. Native before/after: `/private/tmp/md-editor-before-edit-width.png` → `/private/tmp/md-editor-after-edit-width.png`.
-- Final full-suite rerun: **108/108 unit tests across 19 files, 73/73 Playwright scenarios and 18/18 Rust tests pass; strict Clippy, format check, production build, audit 0 and diff check pass**.
-- Final package: 6,211,456-byte ARM64 DMG, SHA-256 `c2ddce459e487b1b50eeba0034dfdd1a3f86a01800d4417961fb79d1c05f2755`. The DMG verifies as valid and its app passes strict deep signature verification. Installed and mounted executable hashes match at `8b7008c174551be55c40e899955b3523199618c38c0cc4089d6900fdd385c54d`.
+- Quick Read checkpoint: **110/110 unit tests across 19 files and 73/73 Playwright scenarios passed; production and Tauri/DMG builds passed**. The unchanged native baseline remained 18/18 Rust with strict Clippy and format checks.
+- Final follow-up package: 6,211,763-byte ARM64 DMG, SHA-256 `8f3d7ec73818236232ba956c0f4d8b8625767b8f782a7fb3442db0157f98feb6`. The DMG verifies as valid and its mounted app passes strict deep signature verification; executable SHA-256 is `5f82d989b75edab378f4508158ef8153ed1a0446440ef33f08b0fd9bb423f735`.
 - Definitive native Edit/media/Read/Split gate repeated on the final package: only the installed `/Applications` app was running as PID 10534. Pointer drag and keyboard resizing produced balanced 25:75 and 50:50 layouts on the real document; the app was left Saved/light/Split 50:50. Evidence: `docs/qa/current-native-final-split-25-75.png`, `docs/qa/current-native-final-split-50-50.png` and `docs/qa/current-native-final-adaptive-split.png`.
+
+## Clean PDF export QA — 2026-08-27
+
+- Reproduced failure before the fix: Chromium generated a four-page PDF containing rail controls, the status line, dark application colors, poor use of page width and an unresolved `Rendering diagram…` placeholder.
+- Export isolation: only a prepared `.preview-content` print surface is printable. App rail, top bar, editor, status bar, dialogs and all other body children are excluded by the print contract rather than by fragile per-control selectors.
+- Source correctness: the print surface is created from the latest `document.content` in Edit/Split/Read/Focus, so a delayed or unmounted preview cannot block export and display-only Bionic formatting cannot leak into the file.
+- Resource readiness: lazy images are promoted to eager/synchronous decoding, local image fallback, document fonts and all Mermaid diagrams — including off-screen assets — finish before the native print command opens. Mermaid rendering is serialized so live preview and export cannot race each other.
+- Pagination: A4 margins, white paper, readable maximum measure and `break-inside` guards cover headings, tables, code, blockquotes, images and Mermaid. A real four-page Chromium artifact and a real two-page macOS WebKit artifact were rendered and visually inspected page by page.
+- Native lifecycle regression: macOS resolves the Tauri print command when the sheet opens, not when Save/Cancel completes. The first saved native proof therefore re-rendered after cleanup and leaked the UI even though its preview looked clean. The final implementation keeps the print surface alive through `afterprint`; both real Save and real Cancel were exercised from Edit, and the app restored cleanly after each.
+- Final evidence: `docs/qa/current-native-pdf-export-proof.pdf` is a 28,834-byte, two-page A4 Quartz PDF, SHA-256 `4068f05a100392dd56b9da218e591f46cedc4e5c44d080ef3392691f9e4c38f4`. The print-sheet capture is `docs/qa/current-native-pdf-export-document-only.png`, SHA-256 `8ef1f7dca6ca7bbb5bd3d5a87a90f1d2e17dd53cbbeeb7e12466e01c9a61f84e`.
+- Final matrix: **118/118 unit tests, 74/74 Playwright scenarios and 18/18 Rust tests pass; TypeScript/Vite production build, strict Clippy, Rust format check and exact `.app` bundle build pass**. The current DMG wrapper failed after producing the valid app bundle, so no fresh DMG is claimed for this wave. Native Quartz output remains untagged (`Tagged: no`), so structural PDF accessibility is not claimed.
 
 ## Adaptive Split follow-up — 2026-08-20
 
@@ -95,4 +109,4 @@
 
 - Optional P3: tune the reading pane's final 10–20 px of vertical rhythm if a future design export establishes a deterministic font rather than a system fallback.
 
-final result: passed — visual, browser, Rust, package-integrity and final installed-app media/Read/PDF gates are closed in product commit `e3385e4` on `origin/main`; no deployment was performed
+final result: passed — the published revamp baseline remains on `origin/main`; the Quick Read and clean-PDF-export follow-ups are verified in the working tree through browser, responsive, unit, Rust, production-build, exact-app and native WebKit gates. They are not yet committed, pushed or installed over `/Applications`; a fresh DMG wrapper remains unproven.
