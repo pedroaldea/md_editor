@@ -65,7 +65,7 @@
 - Mobile 320, 390 and 430 px plus desktop overflow checks: passed.
 - Initial load and theme/Edit/Split/Read transitions: passed the frame-bounded performance smoke five consecutive times.
 - Quick Read `A− / A+`, 70–150% bounds, `[` / `]`, persistence, 44 px touch targets and 390 px containment: passed. The final DMG also exposed the controls through macOS accessibility and restored the saved 110% value.
-- Final Playwright matrix: 74/74 scenarios passed; product console/error assertions remained clean.
+- Final Playwright matrix: 81/81 scenarios passed; product console/error assertions remained clean.
 
 ## Extension QA — 2026-08-20
 
@@ -95,7 +95,7 @@
 - Pagination: A4 margins, white paper, readable maximum measure and `break-inside` guards cover headings, tables, code, blockquotes, images and Mermaid. A real four-page Chromium artifact and a real two-page macOS WebKit artifact were rendered and visually inspected page by page.
 - Native lifecycle regression: macOS resolves the Tauri print command when the sheet opens, not when Save/Cancel completes. The first saved native proof therefore re-rendered after cleanup and leaked the UI even though its preview looked clean. The final implementation keeps the print surface alive through `afterprint`; both real Save and real Cancel were exercised from Edit, and the app restored cleanly after each.
 - Final evidence: `docs/qa/current-native-pdf-export-proof.pdf` is a 28,834-byte, two-page A4 Quartz PDF, SHA-256 `4068f05a100392dd56b9da218e591f46cedc4e5c44d080ef3392691f9e4c38f4`. The print-sheet capture is `docs/qa/current-native-pdf-export-document-only.png`, SHA-256 `8ef1f7dca6ca7bbb5bd3d5a87a90f1d2e17dd53cbbeeb7e12466e01c9a61f84e`.
-- Final matrix: **118/118 unit tests, 74/74 Playwright scenarios and 18/18 Rust tests pass; TypeScript/Vite production build, strict Clippy, Rust format check and exact `.app` bundle build pass**. The current DMG wrapper failed after producing the valid app bundle, so no fresh DMG is claimed for this wave. Native Quartz output remains untagged (`Tagged: no`), so structural PDF accessibility is not claimed.
+- Final matrix after reader supervision: **123/123 unit tests, 81/81 Playwright scenarios and 18/18 Rust tests pass; TypeScript/Vite production build, strict Clippy, Rust format check and exact `.app` bundle build pass**. The current DMG wrapper failed after producing the valid app bundle, so no fresh DMG is claimed for this wave. Native Quartz output remains untagged (`Tagged: no`), so structural PDF accessibility is not claimed.
 
 ## Adaptive Split follow-up — 2026-08-20
 
@@ -105,8 +105,18 @@
 - Browser proof: 1144×768 and 1440×900 at 25:75, 50:50 and 75:25; pane ratios within 1%, Editor center within 5 px, Preview within 2 px, no horizontal overflow, pointer release stable, overlays contained.
 - Native proof: real `/Applications` WebKit app on the real Cartés Markdown document. At 25:75 the 760 px Preview had balanced space and the narrow Editor filled its pane; at 50:50 both surfaces stayed centered. Final neutral capture: `docs/qa/current-native-final-adaptive-split.png`.
 
+## Quick Reader supervision and configurable Read — 2026-08-27
+
+- Reproduced defect: native WebKit collapsed the Quick Reader focus track to roughly one character because `overflow-wrap: anywhere` leaked into the three-fragment word layout. The focus fragment then painted outside its track, producing the reported `te` and `fuentes` collisions.
+- Product fix: words are segmented by grapheme; left, focus and right fragments have independent no-wrap tracks anchored around the pivot. A real `Range` measurement and resize/font observer reduce only the displayed word when its geometry would exceed the stage.
+- Read controls: `A− / A+` change and persist 15–24 px text; `← / →` change and persist a centered 640–1280 px reading canvas in 80 px steps. Invalid stored values are repaired. Read headings scale with the preference.
+- Responsive gate: 390, 1024, 1200, 1280, 1299, 1300 and 1440 px were checked. At the native default 1280 px, all six reader controls plus Search and More remain visible and contained; mobile uses a dedicated control row without horizontal overflow.
+- Browser visual evidence: `output/playwright/quick-read-te-fixed.png`, `output/playwright/quick-read-fuentes-fixed.png`, `output/playwright/read-content-1440.png`, `output/playwright/read-content-1440-large-wide.png`, `output/playwright/read-tablet-1024.png` and `output/playwright/read-mobile-390.png`.
+- Installed-app proof: the exact `/Applications/Md Editor.app` bundle changed `18→19 px` and `960→1040 px`, retained Search/More, restored `18 px / 960 px`, and opened Quick Reader cleanly on the real saved document. Build and installed executables are byte-identical at SHA-256 `21d7fb3028619a3c4c2436127d4045530198fa1fee8223e934e650d5ee89d00a`; strict deep signature verification passes. The previous app is recoverable from `/Users/pedroaldeamas/.Trash/Md Editor before 192e750.app`.
+- Adversarial result: no open P0/P1/P2/P3 after the 1200–1299 px header compaction fix. Final proof is 123/123 unit, 81/81 Playwright and 18/18 Rust, plus production and native bundle builds.
+
 ## Follow-up polish
 
 - Optional P3: tune the reading pane's final 10–20 px of vertical rhythm if a future design export establishes a deterministic font rather than a system fallback.
 
-final result: passed — the published revamp baseline remains on `origin/main`; the Quick Read and clean-PDF-export follow-ups are verified in the working tree through browser, responsive, unit, Rust, production-build, exact-app and native WebKit gates. They are not yet committed, pushed or installed over `/Applications`; a fresh DMG wrapper remains unproven.
+final result: passed — product commit `192e750` is verified through browser, responsive, unit, Rust, production-build, exact-app and installed native WebKit gates. `/Applications/Md Editor.app` is the byte-identical tested bundle; only a fresh notarized DMG remains unproven for public distribution.

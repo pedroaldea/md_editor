@@ -12,12 +12,13 @@ Updated: 2026-08-27
 - Extend the finished shell without visual drift: reversible opaque PDF redaction, richer `/` blocks with native images, and a contextual table editor.
 - Make every Split/Focus surface use the panel it actually owns: resizing must recenter Editor, Preview and contextual menus instead of leaving them anchored to the left.
 - Export Markdown to a clean A4 PDF that contains only the document, waits for local images and Mermaid, and survives the asynchronous native macOS print/save lifecycle without reintroducing application chrome.
+- Keep Quick Reader words legible in native WebKit without fragment overlap, and make Read text size and reading width directly adjustable and persistent.
 
 ## Current Known State
 
 - Repo: `/Users/pedroaldeamas/Desktop/Coding/md_editor`
 - Branch: `main`
-- Published baseline: product commit `e3385e4` plus documentation commit `74d04bb` are on `origin/main`. The Quick Read and clean-PDF-export follow-ups are currently verified working-tree changes and have not been committed, pushed or installed over `/Applications`.
+- Current verified product: commit `192e750`. The exact ARM64 bundle built from it is installed at `/Applications/Md Editor.app`; the previous installation is recoverable from `/Users/pedroaldeamas/.Trash/Md Editor before 192e750.app`.
 - Browser QA service, mounted DMG and native smoke app were stopped cleanly after verification; no Md Editor test instance was intentionally left running.
 - The selected ASCII redesign is implemented as a full-bleed 92 px rail, 64 px command header, 54:46 default editor/reader split and 55 px status line. Structural surfaces are square and flat; the former card/pill/glass silhouette is gone.
 - The default `/` menu exposes 12 compact actions (Heading, Bullet list, Checklist, Quote, Code block, Table, Image, Link, Callout, Divider, Highlight and Underline). Ten advanced actions remain searchable, for 22 total commands.
@@ -25,12 +26,12 @@ Updated: 2026-08-27
 - A square contextual table toolbar follows the active cell and supports add/remove row, add/remove column, alignment cycling and formatting; on mobile it becomes a six-action 44 px bottom toolbar.
 - `ThemeMode` is now the explicit persisted `light | dark` contract. The main chrome, CodeMirror and reading surface switch together.
 - Markdown, Quick Read and PDF.js flows are integrated in the new shell. PDF highlight/underline/redaction, marks navigation/removal, mobile fit-width and corrupt-file errors are covered.
-- Quick Read now exposes a compact `A− · 100% · A+` text-size control. It scales only the reading word from 70% to 150%, supports `[` / `]`, keeps 44 px touch targets, and persists the chosen size in local storage across closing, reopening and native app restarts.
+- Quick Read now exposes a compact `A− · 100% · A+` text-size control. It scales only the reading word from 70% to 150%, supports `[` / `]`, keeps 44 px touch targets, and persists the chosen size in local storage across closing, reopening and native app restarts. Word fragments are split by grapheme and laid out in independent no-wrap tracks; a measured fit guard prevents the WebKit overlap shown in the supervision captures.
 - PDF redaction is intentionally reversible and non-destructive: the overlay is fully opaque and the sidecar stores `[redacted]`, but the original PDF bytes and underlying selectable text are unchanged.
 - The native PDF reader now transports validated bytes through Tauri, uses a portable selectable-text renderer in the macOS WebView, and installs only the missing Promise/ReadableStream standards needed by PDF.js 6.
 - The native macOS startup now ignores and clears a stale recent-document path instead of presenting `FILE_NOT_FOUND`. Markdown and PDF session targets are checked before restoration.
 - Markdown preview assets now resolve relative or absolute local image paths before rendering. A validated native fallback covers images outside the macOS asset scope without widening filesystem access; remote, data, blob and already converted URLs remain unchanged.
-- Read mode uses a centered 960 px reading canvas. Split now measures each live panel: Editor centers gutter plus source up to 760 px, Preview centers up to 760 px, and both fill naturally when the panel is narrower. Focus Editor/Preview follow the same rule with their own measures; mobile keeps explicit edge padding.
+- Read mode now has compact `A− / A+` and `← / →` controls. Text size persists from 15–24 px and the centered reading canvas from 640–1280 px in 80 px steps; the default remains 18 px / 960 px. Split still measures each live panel: Editor centers gutter plus source up to 760 px, Preview centers up to 760 px, and both fill naturally when the panel is narrower. Focus Editor/Preview follow the same rule with their own measures; mobile keeps explicit edge padding.
 - The separator uses Pointer Events and the exact width remaining after its 8 px track, so mouse, pen and touch share one resize path. Slash, selection and table overlays observe panel-size changes, clamp to the panel, and reposition while resizing.
 - Fenced `mermaid` blocks render as diagrams in light and dark modes, including labels containing literal `\\n`; invalid syntax falls back to a visible error. For WebKit layout, labelled dotted feedback edges are temporarily normalized to solid and their dotted stroke is restored in the generated SVG.
 - Mermaid remains optional: its renderer and diagram-specific chunks load only when a diagram is near the viewport. The preview memoizes its injected HTML so scroll-progress rerenders do not erase an already generated SVG. `/diagram` inserts a valid starter flowchart.
@@ -39,7 +40,7 @@ Updated: 2026-08-27
 
 ## Last Known Good State
 
-- Verified release product: `e3385e4`, synchronized with `origin/main`. Markdown editing/preview, reading modes, Quick Read, annotations, PDF.js and native bridges passed the final deterministic/browser/native matrix on 2026-08-20.
+- Verified release product: `192e750`. Markdown editing/preview, reading modes, Quick Read, annotations, PDF.js and native bridges passed the final deterministic/browser/native matrix on 2026-08-27; its exact bundle is installed locally.
 - Pre-revamp baseline: `ea40c6a` (`Fix print pagination flow`). It remains reachable in Git history; no reset or history rewrite was used.
 
 ## What Changed Before This Decision
@@ -76,11 +77,11 @@ Updated: 2026-08-27
 
 ## Evidence Collected
 
-- Git: branch `main`; product commit `e3385e4` is published on `origin/main`. The pre-revamp commit remains in history and no reset or force-push was used.
+- Git: branch `main`; verified product commit `192e750`. The pre-revamp commit remains in history and no reset or force-push was used.
 - Visual QA: exact dark and light source/implementation comparisons plus desktop, mobile, Focus and PDF captures are recorded in `design-qa.md`; final result is `passed` with no actionable P0/P1/P2 mismatch.
 - Browser: final preview has no horizontal overflow at 320, 390 or 430 px; rail/drawer exposes Library, Outline and Command; light/dark themes are effective and persistent.
-- Unit suite: 118/118 frontend tests pass across 19 files.
-- Browser suite: 74/74 Playwright scenarios pass, including Split geometry at 25:75, 50:50 and 75:25 across 1144/1440 px; real pointer release; adaptive Slash/selection/table overlays; Focus geometry; the exact Mermaid `1/3` path; mobile; native bridge; PDF redaction, real multi-page PDF export and performance.
+- Unit suite: 123/123 frontend tests pass across 19 files.
+- Browser suite: 81/81 Playwright scenarios pass, including Quick Reader fragment geometry across five representative words and every 70–150% scale; configurable Read at 390/1024/1200/1280/1299/1300/1440 px; Split geometry at 25:75, 50:50 and 75:25; adaptive overlays; Mermaid; mobile; native bridge; PDF redaction/export and performance.
 - Performance smoke: initial load plus theme/Edit/Split/Read transitions passed five consecutive runs; every core transition stayed below the 200 ms guardrail.
 - Rust suite: 18/18 tests pass; `cargo fmt --check` and strict Clippy pass.
 - Security: `npm audit` reports 0 vulnerabilities after updating DOMPurify and the compatible build/test toolchain.
@@ -93,12 +94,13 @@ Updated: 2026-08-27
 - Current build: production TypeScript/Vite build and `git diff --check` pass. Mermaid is absent from the initial preload path and remains in lazy diagram chunks.
 - Current visual evidence: `/private/tmp/md-editor-relative-image.png`, `/private/tmp/md-editor-mermaid-read.png` and `/private/tmp/md-editor-read-wide.png`.
 - Quick Read runner history was kept visible: the first 9-worker pass produced 71/73 because a performance guard was saturated and an Edit geometry test measured during `Loading editor…`. Both failed cases passed 6/6 in isolated repetition; adding the missing editor-ready wait made the complete serial matrix pass 73/73.
-- Final full-suite rerun on 2026-08-27: **118/118 unit tests across 19 files, 74/74 Playwright scenarios and 18/18 Rust tests pass; production build, strict Clippy, format check and exact `.app` bundle build pass**.
+- Final full-suite rerun on 2026-08-27: **123/123 unit tests across 19 files, 81/81 Playwright scenarios and 18/18 Rust tests pass; production build, strict Clippy, format check and exact `.app` bundle build pass**.
 - Definitive Markdown-to-PDF proof: a synthetic native document containing a table, local SVG asset, 18 paragraphs and an off-screen Mermaid diagram exported directly from Edit mode to a two-page A4 PDF. Extracted text contains the first and final markers and no `LIBRARY`, `OUTLINE`, `COMMAND`, `INSERT`, `utf-8`, `[more]` or `Rendering diagram` tokens. Both pages were rasterized and inspected at 150 DPI. A second native print was cancelled and restored the intact unsaved Edit document with no export surface exposed. Evidence: `docs/qa/current-native-pdf-export-proof.pdf` and `docs/qa/current-native-pdf-export-document-only.png`.
 - Definitive Quick Read native proof: the exact app mounted from the final DMG exposed the size group through macOS accessibility, reopened at the persisted 110%, and rendered `Curso` on one baseline after a WebKit-only focus-fragment wrap was found and fixed. Evidence: `docs/qa/current-native-quick-read-font-110.png`; browser desktop/mobile comparisons are `docs/qa/current-quick-read-font-100.png`, `docs/qa/current-quick-read-font-130.png` and `docs/qa/current-quick-read-font-mobile-140.png`.
 - Definitive native Edit proof: the installed app uses the full writing desk at the exact reported 1144 px window width. Browser geometry asserts an editable column of at least 840 px with balanced outer gaps, no horizontal overflow and a narrower Split surface. Evidence: `/private/tmp/md-editor-after-edit-width.png` (before: `/private/tmp/md-editor-before-edit-width.png`).
 - Definitive native media smoke repeated on the final package: the sole running app is the installed `/Applications` build whose binary matches the mounted DMG. It opened `Estrategia_IA_Cartes_2026-2027.md` with its local image and complex Mermaid visible together. Evidence: `/private/tmp/md-editor-final-native-media.png`.
 - Definitive native Read smoke repeated on the final package: the wide reader remained centered and the installed app was left in light Read mode on the saved real document. Evidence: `/private/tmp/md-editor-final-native-read.png`.
+- Definitive native supervision closeout on the installed `192e750` bundle: Read changed from `18 px` to `19 px` and from `960 px` to `1040 px`, retained Search and More at the default 1280 px window, then restored the original `18 px / 960 px` preferences. Quick Reader opened on the real saved document with separated focus fragments and no visible collision. The app was quit after the smoke and no `md-editor` process remained. Installed and build executables match at SHA-256 `21d7fb3028619a3c4c2436127d4045530198fa1fee8223e934e650d5ee89d00a`; strict deep signature verification passes.
 
 ## Requirement → Proof Matrix
 
@@ -109,6 +111,8 @@ Updated: 2026-08-27
 | `/` formatting menu, images and table tools | unit transforms + native-bridge picker/import + keyboard/mouse/tap/mobile E2E + one-column table roundtrip | PASS |
 | Markdown edit/read/focus/Quick Read | unit, accessibility, performance and repeated E2E | PASS |
 | Quick Read text sizing | 70–150% unit bounds + button/keyboard/persistence E2E + 390 px geometry + final DMG/WebKit smoke | PASS |
+| Quick Read fragment separation | grapheme split + measured autofit + Range geometry in WebKit across five words and nine scales + installed-app visual smoke | PASS |
+| Configurable Read size and width | persisted bounds/repair units + desktop/tablet/mobile/breakpoint E2E + installed-app 18→19 px and 960→1040 px smoke with restoration | PASS |
 | Clean Markdown-to-PDF export | fresh canonical HTML from Edit + isolated print surface + off-screen local assets/Mermaid + long-token containment + real binary PDF parsing + native Save/Cancel + page-by-page visual inspection | PASS |
 | PDF render/select/redact/persist/remove | unit + repeated browser PDF E2E + final installed-app WebKit create/visual/remove/cleanup smoke | PASS |
 | Native save/search/history/export/images/recovery | Tauri invoke contract + Rust roundtrips + native-bridge E2E | PASS |
@@ -124,17 +128,17 @@ Updated: 2026-08-27
 
 - CodeMirror is a 506.72 kB lazy chunk and the PDF worker is 2.22 MB. They do not inflate the initial shell, but first-open latency on older hardware is not benchmarked.
 - The local package is ad-hoc signed and integrity-verified, but public distribution still requires Pedro's Apple Developer identity and notarization credentials. No deployment or external release was attempted.
-- The current PDF-export code has a verified `.app` bundle but no newly generated DMG because the DMG packaging script failed after app bundling. This does not affect the tested app behavior, but it remains the first unproven distribution gate.
+- The current product has a verified and installed `.app` bundle but no newly generated DMG because the DMG packaging script failed after app bundling. This does not affect local use; it remains the first unproven public-distribution gate.
 - The native Quartz PDF is visually and textually correct but reports `Tagged: no`; full structural tagging for screen-reader PDF navigation would require a different PDF-generation pipeline and is not claimed by this visual export fix.
 - Opaque redaction is a reading/markup aid, not cryptographic sanitization: exporting or sharing the original PDF still exposes the original content. Secure destructive redaction would require a separate flatten-and-remove export flow with its own proof gate.
 
 ## Next Action
 
-1. Pedro inspects the native two-page PDF and print-preview capture.
-2. Commit/push, retrying the DMG wrapper and replacing the installed `/Applications` build remain explicit follow-up actions; public sharing still requires Developer ID/notarization or a selected web deployment target.
+1. Use the installed `/Applications/Md Editor.app`; no local installation action remains.
+2. If public distribution is needed, retry the DMG wrapper and complete Developer ID signing/notarization. That is a separate release gate, not a functional blocker for the installed app.
 
 ## Stop Condition
 
 - Stop and do not call the revamp complete if the result still resembles the previous rounded dark-mint shell, if any parallel edit is lost, or if required functionality regresses.
 - Closure requires: a visibly distinct ASCII/editorial shell; explicit working light/dark modes; working `/` formatting menu; no desktop/mobile overflow; clean browser console; green deterministic test/build suite; native launch proof; and fresh visual evidence for Markdown and PDF flows.
-- Current verdict: the published revamp baseline remains on `origin/main`; the uncommitted Quick Read and PDF-export follow-ups pass unit, complete browser, responsive, Rust, production-build, exact-app and native WebKit PDF-save gates. No deployment, commit/push or installed-app replacement was performed; a fresh DMG wrapper is the first remaining distribution gate.
+- Current verdict: product commit `192e750` passes unit, complete browser, responsive, Rust, production-build, exact-app and installed native WebKit gates. The exact bundle is installed at `/Applications/Md Editor.app`, the former app is recoverable from Trash, and no test instance remains running. A notarized DMG is the only unproven public-distribution gate.
