@@ -2,9 +2,15 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
-import TopBar from "../../src/components/TopBar";
+import TopBar, { type ViewMode } from "../../src/components/TopBar";
+import type { ReaderPreferences } from "../../src/types/app";
 
-const mountTopBar = () => {
+const mountTopBar = (
+  viewMode: ViewMode = "split",
+  onReaderFontSizeChange = vi.fn(),
+  onReaderContentWidthChange = vi.fn(),
+  readerPreferences: ReaderPreferences = { fontSize: 18, contentWidth: 960 }
+) => {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -22,7 +28,8 @@ const mountTopBar = () => {
           minWordLength: 4,
           focusWeight: 760
         },
-        viewMode: "split",
+        readerPreferences,
+        viewMode,
         focusMode: false,
         checklistLabel: "Tasks 1/2 (50%)",
         sidebarAvailable: true,
@@ -43,6 +50,8 @@ const mountTopBar = () => {
         onUltraReadFixationChange: vi.fn(),
         onUltraReadMinWordLengthChange: vi.fn(),
         onUltraReadFocusWeightChange: vi.fn(),
+        onReaderFontSizeChange,
+        onReaderContentWidthChange,
         onToggleSidebar: vi.fn()
       })
     );
@@ -76,6 +85,39 @@ describe("TopBar", () => {
       expect(text).toContain("[theme: dark]");
       expect(text).toContain("[search]");
       expect(text).not.toContain("Md Editor");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("shows direct reading controls only in Read and dispatches their changes", () => {
+    const onFontSize = vi.fn();
+    const onContentWidth = vi.fn();
+    const { host, unmount } = mountTopBar("read", onFontSize, onContentWidth);
+    try {
+      expect(host.querySelector<HTMLOutputElement>('[aria-label="Reading text size"]')?.textContent).toBe("18px");
+      expect(host.querySelector<HTMLOutputElement>('[aria-label="Reading canvas width"]')?.textContent).toBe("960px");
+
+      host.querySelector<HTMLButtonElement>('[aria-label="Increase reading text size"]')?.click();
+      host.querySelector<HTMLButtonElement>('[aria-label="Widen reading column"]')?.click();
+
+      expect(onFontSize).toHaveBeenCalledWith(19);
+      expect(onContentWidth).toHaveBeenCalledWith(1040);
+    } finally {
+      unmount();
+    }
+  });
+
+  it("disables growth controls at the safe Read limits", () => {
+    const { host, unmount } = mountTopBar("read", vi.fn(), vi.fn(), {
+      fontSize: 24,
+      contentWidth: 1280
+    });
+    try {
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase reading text size"]')?.disabled).toBe(true);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Widen reading column"]')?.disabled).toBe(true);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Decrease reading text size"]')?.disabled).toBe(false);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Narrow reading column"]')?.disabled).toBe(false);
     } finally {
       unmount();
     }

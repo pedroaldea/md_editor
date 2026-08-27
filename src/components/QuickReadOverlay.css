@@ -121,6 +121,7 @@
   min-height: clamp(190px, 34vh, 300px);
   display: grid;
   place-items: center;
+  overflow: hidden;
   padding: 22px 0;
   border-top: 1px solid var(--border-soft, rgba(142, 151, 166, 0.14));
   border-bottom: 1px solid var(--border-soft, rgba(142, 151, 166, 0.14));
@@ -129,7 +130,7 @@
 .quick-read-word {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
   align-items: baseline;
   font-size: clamp(
     var(--quick-read-font-min, 42px),
@@ -137,27 +138,36 @@
     var(--quick-read-font-max, 88px)
   );
   font-weight: 430;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   line-height: 1.08;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
+  transform: scale(var(--quick-read-fit-scale, 1));
+  transform-origin: center center;
 }
 
 .quick-read-word-prefix {
-  min-width: 0;
+  width: max-content;
+  justify-self: end;
   color: var(--text-primary, #f3f6f8);
   text-align: right;
+  white-space: nowrap;
 }
 
 .quick-read-word-focus {
+  width: max-content;
+  justify-self: center;
   color: var(--accent, #63e8cb);
   font-weight: 760;
   white-space: nowrap;
 }
 
 .quick-read-word-rest {
-  min-width: 0;
+  width: max-content;
+  justify-self: start;
   color: var(--text-primary, #f3f6f8);
   opacity: 0.72;
+  white-space: nowrap;
 }
 
 .quick-read-empty {

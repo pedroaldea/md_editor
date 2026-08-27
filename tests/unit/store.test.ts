@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_READER_PREFERENCES,
   DEFAULT_THEME_MODE,
+  READER_PREFERENCES_STORAGE_KEY,
   THEME_MODE_STORAGE_KEY,
   useDocumentStore
 } from "../../src/state/documentStore";
@@ -104,6 +106,44 @@ describe("document store", () => {
     expect(state.ultraRead.fixation).toBe(0.6);
     expect(state.ultraRead.minWordLength).toBe(5);
     expect(state.ultraRead.focusWeight).toBe(840);
+  });
+
+  it("persists bounded reading font and column preferences", () => {
+    const store = useDocumentStore.getState();
+    store.setReaderFontSize(21);
+    store.setReaderContentWidth(1120);
+
+    expect(useDocumentStore.getState().readerPreferences).toEqual({
+      fontSize: 21,
+      contentWidth: 1120
+    });
+    expect(JSON.parse(window.localStorage.getItem(READER_PREFERENCES_STORAGE_KEY) ?? "null")).toEqual({
+      fontSize: 21,
+      contentWidth: 1120
+    });
+
+    useDocumentStore.getState().reset();
+    expect(useDocumentStore.getState().readerPreferences).toEqual({
+      fontSize: 21,
+      contentWidth: 1120
+    });
+
+    useDocumentStore.getState().setReaderFontSize(200);
+    useDocumentStore.getState().setReaderContentWidth(9999);
+    expect(useDocumentStore.getState().readerPreferences).toEqual({
+      fontSize: 24,
+      contentWidth: 1280
+    });
+  });
+
+  it("repairs malformed persisted reading preferences", () => {
+    window.localStorage.setItem(READER_PREFERENCES_STORAGE_KEY, JSON.stringify({
+      fontSize: "huge",
+      contentWidth: "wide"
+    }));
+    useDocumentStore.getState().reset();
+
+    expect(useDocumentStore.getState().readerPreferences).toEqual(DEFAULT_READER_PREFERENCES);
   });
 
   it("loads snapshot content as dirty state", () => {

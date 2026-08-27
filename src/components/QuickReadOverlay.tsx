@@ -51,17 +51,28 @@ const clamp = (value: number, min: number, max: number): number =>
 const normalizeWords = (words: readonly string[]): string[] =>
   words.map((word) => word.trim()).filter(Boolean);
 
+const graphemeSegmenter =
+  typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
+const splitGraphemes = (word: string): string[] =>
+  graphemeSegmenter
+    ? Array.from(graphemeSegmenter.segment(word), ({ segment }) => segment)
+    : Array.from(word);
+
 const getFocusSplit = (word: string): { prefix: string; focus: string; rest: string } => {
   if (!word) {
     return { prefix: "", focus: "", rest: "" };
   }
 
-  const focusLength = Math.max(1, Math.ceil(word.length * 0.35));
-  const focusStart = Math.max(0, Math.floor((word.length - focusLength) / 2));
+  const graphemes = splitGraphemes(word);
+  const focusLength = Math.max(1, Math.ceil(graphemes.length * 0.35));
+  const focusStart = Math.max(0, Math.floor((graphemes.length - focusLength) / 2));
   return {
-    prefix: word.slice(0, focusStart),
-    focus: word.slice(focusStart, focusStart + focusLength),
-    rest: word.slice(focusStart + focusLength)
+    prefix: graphemes.slice(0, focusStart).join(""),
+    focus: graphemes.slice(focusStart, focusStart + focusLength).join(""),
+    rest: graphemes.slice(focusStart + focusLength).join("")
   };
 };
 
@@ -118,6 +129,8 @@ export default function QuickReadOverlay({
   const speedId = useId();
   const playButtonRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const wordRef = useRef<HTMLDivElement | null>(null);
   const completionNotifiedRef = useRef(false);
   const resetKeyRef = useRef<string | null>(null);
 
@@ -205,6 +218,64 @@ export default function QuickReadOverlay({
       wpm
     });
   }, [currentIndex, normalizedWords.length, onProgress, open, wpm]);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    const word = wordRef.current;
+    if (!open || !stage || !word) {
+      return;
+    }
+    if (typeof document.createRange().getBoundingClientRect !== "function") {
+      return;
+    }
+    let disposed = false;
+
+    const fitWordToStage = (): void => {
+      if (disposed || !stage.isConnected || !word.isConnected) {
+        return;
+      }
+
+      // Measure without the previous fit transform. The focus column stays on the
+      // stage centre; the scale only protects unusually long words from clipping.
+      word.style.setProperty("--quick-read-fit-scale", "1");
+
+      const stageBounds = stage.getBoundingClientRect();
+      const stageCenter = stageBounds.left + stageBounds.width / 2;
+      const textBounds = Array.from(word.querySelectorAll<HTMLElement>("span"))
+        .filter((segment) => segment.textContent)
+        .map((segment) => {
+          const range = document.createRange();
+          range.selectNodeContents(segment);
+          return range.getBoundingClientRect();
+        });
+
+      if (textBounds.length === 0) {
+        return;
+      }
+
+      const left = Math.min(...textBounds.map((bounds) => bounds.left));
+      const right = Math.max(...textBounds.map((bounds) => bounds.right));
+      const widestExtent = Math.max(stageCenter - left, right - stageCenter);
+      const availableExtent = Math.max(stageBounds.width / 2 - 8, 1);
+      const fitScale = widestExtent > 0 ? Math.min(1, availableExtent / widestExtent) : 1;
+      word.style.setProperty("--quick-read-fit-scale", fitScale.toFixed(4));
+    };
+
+    fitWordToStage();
+    const resizeObserver =
+      typeof ResizeObserver === "function" ? new ResizeObserver(fitWordToStage) : null;
+    resizeObserver?.observe(stage);
+    window.addEventListener("resize", fitWordToStage);
+    void document.fonts?.ready.then(() => {
+      if (!disposed) fitWordToStage();
+    });
+
+    return () => {
+      disposed = true;
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", fitWordToStage);
+    };
+  }, [currentIndex, fontScale, open, wordsKey]);
 
   const togglePlayback = (): void => {
     if (normalizedWords.length === 0) {
@@ -338,9 +409,14 @@ export default function QuickReadOverlay({
           </button>
         </header>
 
-        <div className="quick-read-stage" aria-live="off">
+        <div ref={stageRef} className="quick-read-stage" aria-live="off">
           {currentWord ? (
-            <div className="quick-read-word" aria-label={currentWord} style={wordStyle}>
+            <div
+              ref={wordRef}
+              className="quick-read-word"
+              aria-label={currentWord}
+              style={wordStyle}
+            >
               <span className="quick-read-word-prefix" aria-hidden="true">
                 {prefix}
               </span>

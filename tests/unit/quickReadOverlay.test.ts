@@ -71,6 +71,38 @@ describe("QuickReadOverlay", () => {
     }
   });
 
+  it("keeps the 35% RSVP focus intact and reconstructs every word without duplication", () => {
+    const { host, unmount } = mountOverlay({ words: ["te", "fuentes", "cooperación"] });
+    try {
+      const overlay = host.querySelector<HTMLElement>(".quick-read-overlay");
+      const readSegments = () =>
+        Array.from(host.querySelectorAll<HTMLElement>(".quick-read-word span")).map(
+          (segment) => segment.textContent ?? ""
+        );
+
+      expect(readSegments()).toEqual(["", "t", "e"]);
+
+      act(() =>
+        overlay?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))
+      );
+      expect(readSegments()).toEqual(["fu", "ent", "es"]);
+
+      act(() =>
+        overlay?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))
+      );
+      const cooperationSegments = readSegments();
+      expect(cooperationSegments.join("")).toBe("cooperación");
+      const focusLength = Array.from(
+        new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+          cooperationSegments[1]
+        )
+      ).length;
+      expect(focusLength).toBe(4);
+    } finally {
+      unmount();
+    }
+  });
+
   it("advances one word per WPM interval and pauses cleanly", () => {
     vi.useFakeTimers();
     const { host, unmount } = mountOverlay({ words: ["One", "Two"], initialWpm: 600 });

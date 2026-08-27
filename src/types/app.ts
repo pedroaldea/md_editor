@@ -9,6 +9,11 @@ export interface UltraReadConfig {
   focusWeight: number;
 }
 
+export interface ReaderPreferences {
+  fontSize: number;
+  contentWidth: number;
+}
+
 export type AppErrorCode =
   | "FILE_NOT_FOUND"
   | "PERMISSION_DENIED"

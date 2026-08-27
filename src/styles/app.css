@@ -1802,6 +1802,45 @@ input[type="range"] {
 .view-switcher {
   padding-left: 12px;
   border-left: 1px solid var(--border-soft);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.view-switcher::-webkit-scrollbar { display: none; }
+
+.read-view-controls,
+.read-view-control-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+.read-view-controls {
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--border-soft);
+  font: 10px/1 var(--font-mono);
+}
+
+.read-view-control-group { gap: 1px; }
+
+.read-view-control-group button {
+  min-width: 30px;
+  padding-inline: 6px;
+}
+
+.read-view-control-group output {
+  min-width: 46px;
+  padding-inline: 3px;
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.read-view-control-group button:disabled {
+  cursor: not-allowed;
+  opacity: 0.34;
 }
 
 .view-switcher button:hover,
@@ -2256,9 +2295,10 @@ input[type="range"] {
 }
 
 .editor-layout.is-read-mode .preview-content {
-  width: min(100%, 960px);
+  width: min(100%, var(--reader-content-width, 960px));
   margin-inline: auto;
   padding-inline: clamp(36px, 8vw, 96px);
+  font-size: var(--reader-font-size, 18px);
 }
 
 /* Every surface measures the pane it actually owns. Split panels can grow or
@@ -2358,6 +2398,18 @@ input[type="range"] {
 
 .preview-content h2 { margin-top: 1.7em; font-size: 1.65rem; }
 .preview-content h3 { font-size: 1.3rem; }
+
+.editor-layout.is-read-mode .preview-content h1 {
+  font-size: clamp(2.25rem, calc(2.75rem * var(--reader-scale, 1)), 4rem);
+}
+
+.editor-layout.is-read-mode .preview-content h2 {
+  font-size: clamp(1.45rem, calc(1.65rem * var(--reader-scale, 1)), 2.5rem);
+}
+
+.editor-layout.is-read-mode .preview-content h3 {
+  font-size: clamp(1.2rem, calc(1.3rem * var(--reader-scale, 1)), 2rem);
+}
 
 .preview-content blockquote {
   margin-bottom: 1.7em;
@@ -2578,6 +2630,25 @@ input[type="range"] {
 
 .mobile-sidebar-scrim { display: none; }
 
+@media (min-width: 1200px) and (max-width: 1299px) {
+  .top-bar.is-read-view {
+    grid-template-columns: minmax(130px, 1fr) auto auto;
+  }
+
+  .top-bar.is-read-view .top-document > span,
+  .top-bar.is-read-view .top-context {
+    display: none;
+  }
+
+  .top-bar.is-read-view .view-switcher { padding-left: 8px; }
+
+  .top-bar.is-read-view .read-view-controls {
+    gap: 4px;
+    margin-left: 6px;
+    padding-left: 6px;
+  }
+}
+
 @media (max-width: 1199px) and (min-width: 768px) {
   .app-shell { grid-template-columns: 58px minmax(0, 1fr); }
   .ascii-rail-item > span:last-child { display: none; }
@@ -2598,6 +2669,10 @@ input[type="range"] {
     height: 100dvh;
   }
 
+  .app-shell.is-read-view {
+    grid-template-rows: 137px minmax(0, 1fr) 36px;
+  }
+
   .ascii-rail { display: none; }
 
   .top-bar {
@@ -2610,6 +2685,33 @@ input[type="range"] {
       "menu document context utilities"
       "views views views views";
     padding: 0 4px;
+  }
+
+  .top-bar.is-read-view {
+    min-height: 137px;
+    grid-template-rows: 48px 88px;
+  }
+
+  .top-bar.is-read-view .view-switcher {
+    display: grid;
+    grid-template-columns: repeat(4, max-content) minmax(max-content, 1fr);
+    grid-template-rows: 44px 44px;
+    align-items: center;
+    overflow: visible;
+  }
+
+  .top-bar.is-read-view .theme-toggle { margin-left: 0; }
+
+  .top-bar.is-read-view .read-view-controls {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    height: 44px;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border-top: 1px dashed var(--border-soft);
+    border-left: 0;
   }
 
   .mobile-menu-trigger {
@@ -2645,7 +2747,8 @@ input[type="range"] {
     padding: 0 3px;
     border-top: 1px dashed var(--border-soft);
     border-left: 0;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .view-switcher button {
@@ -2706,13 +2809,20 @@ input[type="range"] {
   }
 
   .editor-pane .cm-gutters { min-width: 42px; }
-  .preview-content,
-  .editor-layout.is-read-mode .preview-content {
+  .preview-content {
     width: 100%;
     padding: 24px 20px 48px;
     font-size: 16px;
   }
+  .editor-layout.is-read-mode .preview-content {
+    width: min(100%, var(--reader-content-width, 960px));
+    padding: 24px 20px 48px;
+    font-size: var(--reader-font-size, 18px);
+  }
   .preview-content h1 { font-size: 2rem; }
+  .editor-layout.is-read-mode .preview-content h1 {
+    font-size: clamp(2rem, calc(2.35rem * var(--reader-scale, 1)), 3.25rem);
+  }
 
   .mermaid-diagram { margin: 1.5em 0; padding: 16px 0; }
 

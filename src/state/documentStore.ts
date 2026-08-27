@@ -5,6 +5,7 @@ import type {
   EditorSettings,
   OpenDocumentResult,
   ReaderPalette,
+  ReaderPreferences,
   SaveResult,
   ThemeMode,
   UltraReadConfig
@@ -12,6 +13,14 @@ import type {
 
 export const THEME_MODE_STORAGE_KEY = "md-editor.theme-mode";
 export const DEFAULT_THEME_MODE: ThemeMode = "dark";
+export const READER_PREFERENCES_STORAGE_KEY = "md-editor.reader-preferences";
+export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
+  fontSize: 18,
+  contentWidth: 960
+};
+
+const clamp = (value: number, minimum: number, maximum: number): number =>
+  Math.min(maximum, Math.max(minimum, value));
 
 const isThemeMode = (value: unknown): value is ThemeMode => value === "light" || value === "dark";
 
@@ -40,10 +49,52 @@ const persistThemeMode = (themeMode: ThemeMode): void => {
   }
 };
 
+const normalizeReaderPreferences = (value: unknown): ReaderPreferences => {
+  if (typeof value !== "object" || value === null) {
+    return DEFAULT_READER_PREFERENCES;
+  }
+
+  const preferences = value as Partial<ReaderPreferences>;
+  return {
+    fontSize: typeof preferences.fontSize === "number" && Number.isFinite(preferences.fontSize)
+      ? clamp(Math.round(preferences.fontSize), 15, 24)
+      : DEFAULT_READER_PREFERENCES.fontSize,
+    contentWidth: typeof preferences.contentWidth === "number" && Number.isFinite(preferences.contentWidth)
+      ? clamp(Math.round(preferences.contentWidth / 80) * 80, 640, 1280)
+      : DEFAULT_READER_PREFERENCES.contentWidth
+  };
+};
+
+const loadReaderPreferences = (): ReaderPreferences => {
+  if (typeof window === "undefined") {
+    return DEFAULT_READER_PREFERENCES;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(READER_PREFERENCES_STORAGE_KEY);
+    return stored ? normalizeReaderPreferences(JSON.parse(stored)) : DEFAULT_READER_PREFERENCES;
+  } catch {
+    return DEFAULT_READER_PREFERENCES;
+  }
+};
+
+const persistReaderPreferences = (preferences: ReaderPreferences): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(READER_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
+  } catch {
+    // Reading preferences still work for the current session when storage is unavailable.
+  }
+};
+
 interface DocumentStore {
   document: DocumentState;
   themeMode: ThemeMode;
   readerPalette: ReaderPalette;
+  readerPreferences: ReaderPreferences;
   ultraRead: UltraReadConfig;
   editorSettings: EditorSettings;
   status: string;
@@ -57,6 +108,8 @@ interface DocumentStore {
   newDocument: () => void;
   setThemeMode: (themeMode: ThemeMode) => void;
   setReaderPalette: (palette: ReaderPalette) => void;
+  setReaderFontSize: (fontSize: number) => void;
+  setReaderContentWidth: (contentWidth: number) => void;
   setUltraReadEnabled: (enabled: boolean) => void;
   setUltraReadFixation: (fixation: number) => void;
   setUltraReadMinWordLength: (minWordLength: number) => void;
@@ -84,6 +137,7 @@ const createInitialState = () => ({
   document: createInitialDocument(),
   themeMode: loadThemeMode(),
   readerPalette: "void" as ReaderPalette,
+  readerPreferences: loadReaderPreferences(),
   ultraRead: {
     enabled: false,
     fixation: 0.45,
@@ -186,6 +240,24 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
   setReaderPalette: (palette: ReaderPalette) =>
     set({
       readerPalette: palette
+    }),
+  setReaderFontSize: (fontSize: number) =>
+    set((state) => {
+      const readerPreferences = normalizeReaderPreferences({
+        ...state.readerPreferences,
+        fontSize
+      });
+      persistReaderPreferences(readerPreferences);
+      return { readerPreferences };
+    }),
+  setReaderContentWidth: (contentWidth: number) =>
+    set((state) => {
+      const readerPreferences = normalizeReaderPreferences({
+        ...state.readerPreferences,
+        contentWidth
+      });
+      persistReaderPreferences(readerPreferences);
+      return { readerPreferences };
     }),
   setUltraReadEnabled: (enabled: boolean) =>
     set((state) => ({

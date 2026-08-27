@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { AppError, ThemeMode, UltraReadConfig } from "../types/app";
+import type { AppError, ReaderPreferences, ThemeMode, UltraReadConfig } from "../types/app";
 
 export type ViewMode = "edit" | "split" | "read";
 
@@ -10,6 +10,7 @@ interface TopBarProps {
   error: AppError | null;
   themeMode?: ThemeMode;
   ultraRead: UltraReadConfig;
+  readerPreferences: ReaderPreferences;
   viewMode: ViewMode;
   focusMode: boolean;
   checklistLabel: string | null;
@@ -33,6 +34,8 @@ interface TopBarProps {
   onUltraReadFixationChange: (fixation: number) => void;
   onUltraReadMinWordLengthChange: (minWordLength: number) => void;
   onUltraReadFocusWeightChange: (focusWeight: number) => void;
+  onReaderFontSizeChange: (fontSize: number) => void;
+  onReaderContentWidthChange: (contentWidth: number) => void;
   onToggleSidebar: () => void;
   content?: string;
 }
@@ -53,6 +56,7 @@ export default function TopBar({
   error,
   themeMode = "dark",
   ultraRead,
+  readerPreferences,
   viewMode,
   focusMode,
   checklistLabel,
@@ -76,6 +80,8 @@ export default function TopBar({
   onUltraReadFixationChange,
   onUltraReadMinWordLengthChange,
   onUltraReadFocusWeightChange,
+  onReaderFontSizeChange,
+  onReaderContentWidthChange,
   onToggleSidebar,
   content = ""
 }: TopBarProps) {
@@ -94,7 +100,7 @@ export default function TopBar({
         : "Saved";
 
   return (
-    <header className="top-bar">
+    <header className={`top-bar${viewMode === "read" && !isPdf ? " is-read-view" : ""}`}>
       <button
         type="button"
         className="mobile-menu-trigger"
@@ -157,6 +163,52 @@ export default function TopBar({
         >
           [theme: {themeMode}]
         </button>
+        {viewMode === "read" && !isPdf ? (
+          <span className="read-view-controls" role="group" aria-label="Reading appearance">
+            <span className="read-view-control-group" role="group" aria-label="Text size controls">
+              <button
+                type="button"
+                aria-label="Decrease reading text size"
+                title="Decrease reading text size"
+                disabled={readerPreferences.fontSize <= 15}
+                onClick={() => onReaderFontSizeChange(readerPreferences.fontSize - 1)}
+              >
+                A−
+              </button>
+              <output aria-label="Reading text size">{readerPreferences.fontSize}px</output>
+              <button
+                type="button"
+                aria-label="Increase reading text size"
+                title="Increase reading text size"
+                disabled={readerPreferences.fontSize >= 24}
+                onClick={() => onReaderFontSizeChange(readerPreferences.fontSize + 1)}
+              >
+                A+
+              </button>
+            </span>
+            <span className="read-view-control-group" role="group" aria-label="Canvas width controls">
+              <button
+                type="button"
+                aria-label="Narrow reading column"
+                title="Narrow reading column"
+                disabled={readerPreferences.contentWidth <= 640}
+                onClick={() => onReaderContentWidthChange(readerPreferences.contentWidth - 80)}
+              >
+                ←
+              </button>
+              <output aria-label="Reading canvas width">{readerPreferences.contentWidth}px</output>
+              <button
+                type="button"
+                aria-label="Widen reading column"
+                title="Widen reading column"
+                disabled={readerPreferences.contentWidth >= 1280}
+                onClick={() => onReaderContentWidthChange(readerPreferences.contentWidth + 80)}
+              >
+                →
+              </button>
+            </span>
+          </span>
+        ) : null}
       </nav>
 
       <div className="top-utilities" aria-label="Utilities">

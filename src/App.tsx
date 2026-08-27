@@ -181,6 +181,7 @@ export default function App() {
     error,
     themeMode,
     readerPalette,
+    readerPreferences,
     ultraRead,
     editorSettings,
     setContent,
@@ -192,6 +193,8 @@ export default function App() {
     newDocument,
     setThemeMode,
     setReaderPalette,
+    setReaderFontSize,
+    setReaderContentWidth,
     setUltraReadEnabled,
     setUltraReadFixation,
     setUltraReadMinWordLength,
@@ -1850,7 +1853,7 @@ export default function App() {
 
   return (
     <div
-      className={`app-shell${focusMode ? " is-focus-mode" : ""}${isResizing ? " is-resizing" : ""}`}
+      className={`app-shell${focusMode ? " is-focus-mode" : ""}${isResizing ? " is-resizing" : ""}${readMode ? " is-read-view" : ""}`}
       data-theme={themeMode}
     >
       {!focusMode ? (
@@ -1874,6 +1877,7 @@ export default function App() {
           error={error}
           themeMode={themeMode}
           ultraRead={ultraRead}
+          readerPreferences={readerPreferences}
           viewMode={viewMode}
           focusMode={focusMode}
           checklistLabel={checklistLabel}
@@ -1930,6 +1934,8 @@ export default function App() {
           onUltraReadFixationChange={handleUltraReadFixationChange}
           onUltraReadMinWordLengthChange={handleUltraReadMinWordLengthChange}
           onUltraReadFocusWeightChange={handleUltraReadFocusWeightChange}
+          onReaderFontSizeChange={setReaderFontSize}
+          onReaderContentWidthChange={setReaderContentWidth}
           onToggleSidebar={() => {
             setSidebarCollapsed((current) => !current);
           }}
@@ -2086,7 +2092,10 @@ export default function App() {
               className="pane pane-preview"
               style={
                 {
-                  "--bionic-focus-weight": String(Math.round(ultraRead.focusWeight))
+                  "--bionic-focus-weight": String(Math.round(ultraRead.focusWeight)),
+                  "--reader-font-size": `${readerPreferences.fontSize}px`,
+                  "--reader-content-width": `${readerPreferences.contentWidth}px`,
+                  "--reader-scale": String(readerPreferences.fontSize / 18)
                 } as CSSProperties
               }
             >
