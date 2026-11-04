@@ -17,11 +17,8 @@
   };
 
   const STYLE = `
-    :root { --bg: #fbfaf7; --fg: #1d1c1a; --muted: #6b675f; --line: #e3dfd6; --code: #f1eee7; --link: #1f5fbf; --width: 760px; color-scheme: light; }
-    :root[data-theme="dark"] { --bg: #141413; --fg: #e9e7e1; --muted: #a29e94; --line: #2f2e2b; --code: #1e1d1b; --link: #7fb0ff; color-scheme: dark; }
-    @media (prefers-color-scheme: dark) {
-      :root[data-theme="auto"] { --bg: #141413; --fg: #e9e7e1; --muted: #a29e94; --line: #2f2e2b; --code: #1e1d1b; --link: #7fb0ff; color-scheme: dark; }
-    }
+    ${root.MdReaderCore.themeCss(":root")}
+    :root { --width: 760px; }
     html { background: var(--bg); }
     body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.7 ui-serif, Georgia, "Iowan Old Style", serif; }
     .mdr-bar { position: sticky; top: 0; z-index: 2; display: flex; gap: 8px; align-items: center; padding: 10px 16px;
@@ -42,7 +39,7 @@
     th, td { border: 1px solid var(--line); padding: 6px 12px; }
     img { max-width: 100%; height: auto; }
     hr { border: 0; border-top: 1px solid var(--line); }
-    mark { background: #ffe58a; color: #1d1c1a; }
+    mark { background: var(--mark); color: inherit; }
     .raw { white-space: pre-wrap; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
   `;
 
@@ -74,7 +71,13 @@
   /** Markdown source → sanitized HTML string. */
   const render = (source) => {
     const html = root.marked.parse(source, { gfm: true, breaks: false, async: false });
-    return root.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    // The page runs on the file's own origin: allow document markup only, no
+    // forms, embedded styles or frames that could imitate the site.
+    return root.DOMPurify.sanitize(html, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ["form", "input", "button", "textarea", "select", "option", "style", "iframe", "frame", "object", "embed", "dialog", "base", "meta", "link"],
+      FORBID_ATTR: ["style", "srcset", "formaction", "action", "ping"]
+    });
   };
 
   const mount = ({ settings, onBionic, onQuickRead, isBionic }) => {

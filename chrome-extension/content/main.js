@@ -7,6 +7,7 @@
   const bionic = root.MdReaderBionic;
   const quickRead = root.MdReaderQuickRead;
   const markdown = root.MdReaderMarkdown;
+  const reader = root.MdReaderReader;
 
   let settings = core.DEFAULTS;
   const siteKey = () => (root.location.protocol === "file:" ? "file://" : root.location.hostname);
@@ -37,12 +38,18 @@
     "mdr:status": () => ({
       bionic: bionic.isEnabled(),
       quickRead: quickRead.isOpen(),
+      reader: reader.isOpen(),
       markdown: root.MdReaderMarkdownMounted === true,
       site: siteKey(),
       autoBionic: settings.autoBionicSites.includes(siteKey())
     }),
     "mdr:toggle-bionic": () => ({ bionic: setBionic(!bionic.isEnabled()) }),
     "mdr:set-bionic": (message) => ({ bionic: setBionic(Boolean(message.value)) }),
+    "mdr:reader": () => {
+      if (reader.isOpen()) reader.close();
+      else reader.open({ settings, onSettingsChange: saveSettings });
+      return { reader: reader.isOpen() };
+    },
     "mdr:quick-read": (message) => {
       if (quickRead.isOpen()) quickRead.close();
       else openQuickRead(typeof message.text === "string" ? message.text.trim() : "");
@@ -61,6 +68,7 @@
     if (area !== "sync" || !changes.settings) return;
     settings = core.normalizeSettings(changes.settings.newValue);
     bionic.setSettings(settings);
+    reader.setSettings(settings);
     if (markdown && root.MdReaderMarkdownMounted) document.documentElement.dataset.theme = settings.theme;
   });
 

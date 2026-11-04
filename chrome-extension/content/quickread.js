@@ -32,7 +32,7 @@
     const scored = new Map();
     const paragraphs = doc.body ? doc.body.querySelectorAll("p, li") : [];
     paragraphs.forEach((paragraph) => {
-      if (paragraph.closest(NOISE)) return;
+      if (paragraph.closest(NOISE) || core.inClutter(paragraph, doc.body)) return;
       const length = textLength(paragraph);
       if (length < 40) return;
       let parent = paragraph.parentElement;
@@ -63,22 +63,63 @@
   };
 
   /** Readable text of `element`, one block per paragraph. */
+  const IGNORED = "script, style, noscript, template, svg, math, canvas, iframe, object, button, select, textarea, input";
+  // Elements whose edges separate words even with no whitespace in the source,
+  // e.g. HN's <a>Hacker News</a><a>new</a>.
+  const SEPARATING = new Set([
+    "A", "TD", "TH", "TR", "LI", "P", "DIV", "BR", "H1", "H2", "H3", "H4", "H5", "H6",
+    "SECTION", "ARTICLE", "HEADER", "FOOTER", "BLOCKQUOTE", "DD", "DT", "FIGCAPTION", "LABEL"
+  ]);
+
+  const separatorOf = (node, stop) => {
+    for (let element = node.parentElement; element && element !== stop; element = element.parentElement) {
+      if (SEPARATING.has(element.tagName)) return element;
+    }
+    return stop;
+  };
+
+  /** Text of `element` with words kept apart at link/cell/block edges. */
+  const readableText = (element, skip) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          return node.tagName === "BR" ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        }
+        return node.parentElement && !node.parentElement.closest(skip) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    let text = "";
+    let previousOwner = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        text += "\n";
+        continue;
+      }
+      const owner = separatorOf(node, element);
+      if (previousOwner && owner !== previousOwner && !/\s$/u.test(text) && !/^\s/u.test(node.nodeValue)) {
+        text += " ";
+      }
+      text += node.nodeValue;
+      previousOwner = owner;
+    }
+    return text.replace(FOOTNOTE, "").replace(/[ \t\r\f\v]+/gu, " ").replace(/\s*\n\s*/gu, "\n").trim();
+  };
+
   const blockText = (element) => {
     const blocks = Array.from(element.querySelectorAll(BLOCKS)).filter(
       (block) =>
         !block.closest(NOISE) &&
+        !core.inClutter(block, element.parentElement) &&
         // Keep the innermost blocks only, so <li><p>…</p></li> is read once.
         !block.querySelector(BLOCKS) &&
         visible(block)
     );
-    const parts = blocks.map((block) => {
-      const clone = block.cloneNode(true);
-      clone.querySelectorAll(INLINE_NOISE).forEach((node) => node.remove());
-      return (clone.textContent || "").replace(FOOTNOTE, "").replace(/\s+/gu, " ").trim();
-    });
+    const skip = `${IGNORED}, ${INLINE_NOISE}`;
+    const parts = blocks.map((block) => readableText(block, skip).replace(/\s+/gu, " "));
     const text = parts.filter(Boolean).join("\n\n");
     if (text.length > 0) return text;
-    return (element.innerText || element.textContent || "").trim();
+    // Pages without prose blocks (link lists, apps): read what is visible, never code.
+    return readableText(element, `${IGNORED}, ${NOISE.replace("table, ", "")}, ${INLINE_NOISE}`);
   };
 
   const extractPageText = (doc = document) => {
@@ -93,20 +134,12 @@
   const STYLE = `
     :host { all: initial; }
     .overlay {
-      --bg: #f6f4ef; --fg: #1b1b1a; --muted: #6d6a63; --line: #d9d5cc; --accent: #d1341f; --panel: #ffffff;
       position: fixed; inset: 0; z-index: 2147483647; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr);
-      background: color-mix(in srgb, var(--bg) 97%, transparent); color: var(--fg);
+      background: var(--bg); color: var(--fg);
       font: 15px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      -webkit-font-smoothing: antialiased; backdrop-filter: blur(6px);
+      -webkit-font-smoothing: antialiased; animation: mdr-in .16s ease-out;
     }
-    .overlay[data-theme="dark"] {
-      --bg: #121212; --fg: #ecebe7; --muted: #9b988f; --line: #33322f; --accent: #ff5a43; --panel: #1c1c1b;
-    }
-    @media (prefers-color-scheme: dark) {
-      .overlay[data-theme="auto"] {
-        --bg: #121212; --fg: #ecebe7; --muted: #9b988f; --line: #33322f; --accent: #ff5a43; --panel: #1c1c1b;
-      }
-    }
+    ${core.themeCss(".overlay")}
     header, footer { display: flex; align-items: center; gap: 12px; padding: 14px 20px; }
     header { justify-content: space-between; border-bottom: 1px solid var(--line); }
     .title { flex: 1 1 auto; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -118,6 +151,9 @@
       display: inline-flex; align-items: center; justify-content: center; font: inherit; font-variant-numeric: tabular-nums;
     }
     button:hover { border-color: var(--muted); }
+    button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    @keyframes mdr-in { from { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .overlay { animation: none; } }
     button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     button:disabled { opacity: .4; cursor: default; }
     button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); min-width: 96px; font-weight: 600; }
@@ -157,7 +193,7 @@
       <header>
         <span class="title" id="mdr-title"></span>
         <span class="meta" aria-live="off"></span>
-        <button type="button" data-action="close" aria-label="Cerrar lectura rápida">✕</button>
+        <button type="button" data-action="close" aria-label="Cerrar lectura rápida"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
       <div class="stage">
         <span class="reticle top" aria-hidden="true"></span>
@@ -168,10 +204,10 @@
       <footer>
         <input class="progress" type="range" min="0" value="0" step="1" aria-label="Posición en el texto" />
         <div class="controls">
-          <button type="button" data-action="restart" aria-label="Volver al principio">⟲</button>
-          <button type="button" data-action="back" aria-label="Frase anterior">«</button>
+          <button type="button" data-action="restart" aria-label="Volver al principio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></svg></button>
+          <button type="button" data-action="back" aria-label="Frase anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></svg></button>
           <button type="button" class="primary" data-action="play">Leer</button>
-          <button type="button" data-action="forward" aria-label="Siguiente frase">»</button>
+          <button type="button" data-action="forward" aria-label="Siguiente frase"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></svg></button>
           <span class="group" role="group" aria-label="Velocidad">
             <button type="button" data-action="slower" aria-label="Más lento">−</button>
             <span class="value wpm"></span>
@@ -441,6 +477,7 @@
     close,
     isOpen: () => Boolean(active),
     extractPageText,
-    findMainRoot
+    findMainRoot,
+    blockText
   };
 })(globalThis);

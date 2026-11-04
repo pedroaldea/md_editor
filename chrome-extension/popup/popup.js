@@ -47,8 +47,34 @@ const renderSample = () => {
   sample.classList.toggle("dim", settings.bionicDimRest);
 };
 
+const themeStyle = document.createElement("style");
+themeStyle.textContent = core.themeCss(":root");
+document.head.append(themeStyle);
+
+const buildThemes = () => {
+  const container = $("themes");
+  for (const name of core.THEME_NAMES) {
+    const theme = core.THEMES[name];
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "theme";
+    input.value = name;
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = "Aa";
+    chip.style.background = theme ? theme.bg : "linear-gradient(135deg, #fbfaf7 50%, #131312 50%)";
+    chip.style.color = theme ? theme.fg : "#888";
+    const caption = document.createElement("span");
+    caption.className = "name";
+    caption.textContent = theme ? theme.label : "Auto";
+    label.append(input, chip, caption);
+    container.append(label);
+  }
+};
+
 function render() {
-  document.documentElement.dataset.theme = settings.theme === "auto" ? "" : settings.theme;
+  document.documentElement.dataset.theme = settings.theme;
   for (const key of Object.keys(formatters)) {
     const input = $(key);
     const value = key === "bionicFixation" ? Math.round(settings[key] * 100) : settings[key];
@@ -91,6 +117,11 @@ const wire = () => {
     if (response) setBionicButton(response.bionic);
   });
 
+  $("reader").addEventListener("click", async () => {
+    await forward({ type: "mdr:reader" });
+    window.close();
+  });
+
   $("quick").addEventListener("click", async () => {
     await forward({ type: "mdr:quick-read" });
     window.close();
@@ -113,8 +144,10 @@ const start = async () => {
   $("unavailable").hidden = scriptable;
   $("bionic").disabled = !scriptable;
   $("quick").disabled = !scriptable;
+  $("reader").disabled = !scriptable;
   $("autoBionic").disabled = !scriptable;
 
+  buildThemes();
   wire();
   render();
 

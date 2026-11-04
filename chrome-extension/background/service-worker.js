@@ -1,17 +1,19 @@
 // Context menus, keyboard commands and on-demand injection for tabs that were
 // already open before the extension was installed or updated.
-const CONTENT_FILES = ["content/core.js", "content/bionic.js", "content/quickread.js", "content/main.js"];
+const CONTENT_FILES = ["content/core.js", "content/bionic.js", "content/quickread.js", "content/reader.js", "content/main.js"];
 
 const MENU = {
   quickSelection: "mdr-quick-selection",
   quickPage: "mdr-quick-page",
-  bionic: "mdr-bionic"
+  bionic: "mdr-bionic",
+  reader: "mdr-reader"
 };
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({ id: MENU.quickSelection, title: "Lectura rápida de la selección", contexts: ["selection"] });
     chrome.contextMenus.create({ id: MENU.quickPage, title: "Lectura rápida de esta página", contexts: ["page"] });
+    chrome.contextMenus.create({ id: MENU.reader, title: "Modo lectura (sin anuncios)", contexts: ["page"] });
     chrome.contextMenus.create({ id: MENU.bionic, title: "Alternar lectura biónica", contexts: ["page", "selection"] });
   });
 });
@@ -34,6 +36,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     sendToTab(tab, { type: "mdr:quick-read", text: info.selectionText || "" }).catch(() => {});
   } else if (info.menuItemId === MENU.quickPage) {
     sendToTab(tab, { type: "mdr:quick-read", text: "" }).catch(() => {});
+  } else if (info.menuItemId === MENU.reader) {
+    sendToTab(tab, { type: "mdr:reader" }).catch(() => {});
   } else if (info.menuItemId === MENU.bionic) {
     sendToTab(tab, { type: "mdr:toggle-bionic" }).catch(() => {});
   }
@@ -41,7 +45,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   const target = tab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-  const type = command === "toggle-bionic" ? "mdr:toggle-bionic" : command === "quick-read" ? "mdr:quick-read" : null;
+  const type = { "toggle-bionic": "mdr:toggle-bionic", "quick-read": "mdr:quick-read", reader: "mdr:reader" }[command];
   if (type) sendToTab(target, { type }).catch(() => {});
 });
 

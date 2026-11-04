@@ -8,6 +8,11 @@
 
   const SKIP =
     "script, style, noscript, template, textarea, input, select, option, button, code, pre, kbd, samp, var, svg, math, canvas, video, audio, iframe, object, [contenteditable=''], [contenteditable='true'], [contenteditable='plaintext-only'], [aria-hidden='true'], mdr-w, #mdr-quickread-host, .mdr-skip";
+  // Site chrome (menus, tabs, toolbars, buttons) is scanned, not read: bolding it
+  // only adds noise. Links stay bionic when they sit inside running prose.
+  const CHROME =
+    "nav, header, footer, label, summary, [role='navigation'], [role='banner'], [role='contentinfo'], [role='menu'], [role='menubar'], [role='menuitem'], [role='tab'], [role='tablist'], [role='toolbar'], [role='button'], [role='grid'], [role='tree'], [role='search'], [role='dialog'], [role='tooltip']";
+  const PROSE = "p, li, blockquote, dd, figcaption, h1, h2, h3, h4, h5, h6";
   const STYLE_ID = "mdr-bionic-style";
   const CHUNK = 400;
 
@@ -29,19 +34,27 @@
       style.id = STYLE_ID;
       (document.head || document.documentElement).append(style);
     }
-    style.textContent = `
+    style.textContent = css();
+  };
+
+  const css = () => `
       mdr-w { display: inline; font: inherit; color: inherit; letter-spacing: inherit; }
       mdr-f { display: inline; font-weight: ${settings.bionicWeight} !important; color: inherit; }
       ${settings.bionicDimRest ? "mdr-w > mdr-r { opacity: .78; }" : ""}
       mdr-r { display: inline; }
     `;
-  };
 
   const skippable = (textNode) => {
     const parent = textNode.parentElement;
     if (!parent) return true;
-    if (parent.closest(SKIP)) return true;
-    return parent.isContentEditable;
+    if (parent.closest(SKIP) || parent.isContentEditable) return true;
+    const chrome = parent.closest(CHROME);
+    // An <article> or <main> inside a header-like wrapper is still content.
+    if (chrome && !chrome.contains(parent.closest("article, main") || document.documentElement)) {
+      return true;
+    }
+    const link = parent.closest("a");
+    return Boolean(link && !link.parentElement?.closest(PROSE));
   };
 
   const transform = (textNode) => {
@@ -131,8 +144,8 @@
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   };
 
-  const revert = () => {
-    const words = document.querySelectorAll("mdr-w");
+  const revert = (container = document) => {
+    const words = container.querySelectorAll("mdr-w");
     const parents = new Set();
     words.forEach((word) => {
       parents.add(word.parentNode);
@@ -159,7 +172,18 @@
     document.getElementById(STYLE_ID)?.remove();
   };
 
+  /** Synchronous bionic pass over one subtree, e.g. the Reader's shadow root. */
+  const applyTo = (container) => {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+    nodes.forEach(transform);
+  };
+
   root.MdReaderBionic = {
+    css,
+    applyTo,
+    revertIn: revert,
     isEnabled: () => enabled,
     enable,
     disable,

@@ -21,8 +21,11 @@
         <button type="button" id="bionic" class="toggle" aria-pressed="false">
           <span>Bionic</span><kbd>⌥⇧B</kbd>
         </button>
-        <button type="button" id="quick" class="primary">
+        <button type="button" id="quick">
           <span>Lectura rápida</span><kbd>⌥⇧R</kbd>
+        </button>
+        <button type="button" id="reader" class="primary wide">
+          <span>Modo lectura <small>sin anuncios</small></span><kbd>⌥⇧L</kbd>
         </button>
       </section>
 
@@ -73,11 +76,8 @@
 
       <section>
         <h2>Tema</h2>
-        <div class="segmented" role="radiogroup" aria-label="Tema">
-          <label><input type="radio" name="theme" value="auto" /><span>Auto</span></label>
-          <label><input type="radio" name="theme" value="light" /><span>Claro</span></label>
-          <label><input type="radio" name="theme" value="dark" /><span>Oscuro</span></label>
-        </div>
+        <div class="themes" role="radiogroup" aria-label="Tema" id="themes"></div>
+        <p class="muted small">Se aplica a Lectura rápida, Modo lectura y archivos .md.</p>
       </section>
     </main>
 

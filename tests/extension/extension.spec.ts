@@ -20,6 +20,7 @@ const ARTICLE = `<!doctype html><html lang="es"><head><meta charset="utf-8"><tit
   <p><input id="campo" value="no se toca"> Formulario intacto.</p>
 </article>
 <aside>Publicidad lateral irrelevante para la lectura principal del artículo.</aside>
+<div class="ad-banner"><p>COMPRA YA este anuncio insistente que no debería aparecer nunca.</p></div>
 </body></html>`;
 
 const MARKDOWN = `# Documento Markdown
@@ -235,10 +236,54 @@ test("on-demand injection is idempotent for tabs opened before install", async (
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id! },
-      files: ["content/core.js", "content/bionic.js", "content/quickread.js", "content/main.js"]
+      files: ["content/core.js", "content/bionic.js", "content/quickread.js", "content/reader.js", "content/main.js"]
     });
   });
   expect(await sendToActiveTab(worker, { type: "mdr:toggle-bionic" })).toEqual({ bionic: true });
   await expect(page.locator("mdr-w").first()).toBeVisible();
   expect(await sendToActiveTab(worker, { type: "mdr:status" })).toMatchObject({ bionic: true });
+});
+
+test("reader mode shows only the article, keeps settings and hands off to quick read", async ({ context, worker, origin }) => {
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`${origin}/articulo`);
+  await page.bringToFront();
+  await expect.poll(() => sendToActiveTab(worker, { type: "mdr:status" })).toBeTruthy();
+
+  expect(await sendToActiveTab(worker, { type: "mdr:reader" })).toEqual({ reader: true });
+  const reader = page.locator("#mdr-reader-host .reader");
+  await expect(reader).toBeVisible();
+  await expect(page.locator("#mdr-reader-host h1.title")).toHaveText(/Artículo de prueba|Leer mejor en la web/);
+  const article = page.locator("#mdr-reader-host article");
+  await expect(article).toContainText("La lectura biónica resalta");
+  await expect(article).not.toContainText("COMPRA YA");
+  await expect(article).not.toContainText("menú de navegación");
+  await expect(article).not.toContainText("Publicidad lateral");
+  await expect(page.locator("#mdr-reader-host article input")).toHaveCount(0);
+
+  await page.locator("#mdr-reader-host [data-theme-option='sepia']").click();
+  await expect(reader).toHaveAttribute("data-theme", "sepia");
+  expect(await reader.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe("rgb(245, 236, 217)");
+  await page.locator("#mdr-reader-host [data-action='bigger']").click();
+  await expect(page.locator("#mdr-reader-host .size")).toHaveText("21");
+
+  await page.locator("#mdr-reader-host [data-action='bionic']").click();
+  await expect(page.locator("#mdr-reader-host article mdr-w").first()).toBeVisible();
+  await expect(page.locator("body mdr-w")).toHaveCount(0);
+
+  await page.locator("#mdr-reader-host [data-action='quick']").click();
+  await expect(page.locator("#mdr-quickread-host .overlay")).toHaveAttribute("data-theme", "sepia");
+  await expect(page.locator("#mdr-quickread-host .word")).toHaveText("La");
+  // Esc closes Quick Read first, then the reader.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#mdr-quickread-host")).toHaveCount(0);
+  await expect(reader).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#mdr-reader-host")).toHaveCount(0);
+
+  const stored = await worker.evaluate(() => chrome.storage.sync.get("settings"));
+  expect(stored.settings).toMatchObject({ theme: "sepia", readerFontSize: 21 });
+  expect(errors).toEqual([]);
 });

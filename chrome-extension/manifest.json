@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Md Reader — Bionic y lectura rápida",
   "short_name": "Md Reader",
-  "version": "1.0.0",
-  "description": "Lectura biónica, lectura rápida (RSVP) y visor de Markdown en cualquier página, como en Md Editor.",
+  "version": "1.1.0",
+  "description": "Lectura biónica, lectura rápida, modo lectura sin anuncios y visor de Markdown en cualquier página, como en Md Editor.",
   "minimum_chrome_version": "120",
   "icons": {
     "16": "icons/icon-16.png",
@@ -22,41 +22,78 @@
   "background": {
     "service_worker": "background/service-worker.js"
   },
-  "permissions": ["storage", "contextMenus", "scripting"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["*://*/*.md", "*://*/*.markdown", "file:///*.md", "file:///*.markdown"],
+      "matches": [
+        "*://*/*.md",
+        "*://*/*.markdown",
+        "file:///*.md",
+        "file:///*.markdown"
+      ],
       "js": [
         "vendor/marked.umd.js",
         "vendor/purify.min.js",
         "content/core.js",
         "content/bionic.js",
         "content/quickread.js",
+        "content/reader.js",
         "content/markdown-view.js",
         "content/main.js"
       ],
       "run_at": "document_end"
     },
     {
-      "matches": ["<all_urls>"],
-      "exclude_matches": ["*://*/*.md", "*://*/*.markdown", "file:///*.md", "file:///*.markdown"],
-      "js": ["content/core.js", "content/bionic.js", "content/quickread.js", "content/main.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "exclude_matches": [
+        "*://*/*.md",
+        "*://*/*.markdown",
+        "file:///*.md",
+        "file:///*.markdown"
+      ],
+      "js": [
+        "content/core.js",
+        "content/bionic.js",
+        "content/quickread.js",
+        "content/reader.js",
+        "content/main.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Alt+Shift+M" },
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
       "description": "Abrir Md Reader"
     },
     "toggle-bionic": {
-      "suggested_key": { "default": "Alt+Shift+B" },
+      "suggested_key": {
+        "default": "Alt+Shift+B"
+      },
       "description": "Alternar lectura biónica"
     },
     "quick-read": {
-      "suggested_key": { "default": "Alt+Shift+R" },
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
       "description": "Lectura rápida de la selección o de la página"
+    },
+    "reader": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Modo lectura sin anuncios"
     }
   }
 }

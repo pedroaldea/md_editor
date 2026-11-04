@@ -11,6 +11,7 @@ beforeAll(async () => {
   await import("../../chrome-extension/content/core.js");
   await import("../../chrome-extension/content/bionic.js");
   await import("../../chrome-extension/content/quickread.js");
+  await import("../../chrome-extension/content/reader.js");
   await import("../../chrome-extension/content/markdown-view.js");
 });
 
@@ -38,7 +39,7 @@ describe("extension core", () => {
 
   it("splits bionic words by grapheme in every script and keeps the text intact", () => {
     const core = g.MdReaderCore;
-    const text = "Łódź, piękna — Привет мир! a 42";
+    const text = "Łódź, piękna — Привет мир! a 2023";
     const parts = core.bionicParts(text, 0.5, 3);
     expect(parts.map((part: any) => part.text).join("")).toBe(text);
     const words = parts.filter((part: any) => part.focus);
@@ -48,6 +49,8 @@ describe("extension core", () => {
       ["При", "вет"],
       ["ми", "р"]
     ]);
+    // "2023" stays plain: numbers are not split.
+    expect(parts.at(-1)).toEqual({ text: "2023" });
   });
 
   it("keeps punctuation on RSVP tokens and paces sentences, clauses and paragraphs", () => {
@@ -103,6 +106,18 @@ describe("page bionic", () => {
     expect(document.body.innerHTML).toBe(before);
   });
 
+  it("leaves site chrome and stand-alone UI links alone but keeps prose links", async () => {
+    document.body.innerHTML = `
+      <nav><a href="#">Productos</a></nav>
+      <div class="topics"><a id="ui" href="#">markdown</a></div>
+      <div role="button">Suscribirse</div>
+      <p id="prose">Lee la <a href="#">documentación completa</a> ahora</p>`;
+    g.MdReaderBionic.enable();
+    await flushIdle();
+    expect(document.querySelector("nav mdr-w, #ui mdr-w, [role='button'] mdr-w")).toBeNull();
+    expect(document.querySelectorAll("#prose a mdr-w")).toHaveLength(2);
+  });
+
   it("follows content added after activation", async () => {
     document.body.innerHTML = "<p>Primero</p>";
     g.MdReaderBionic.enable();
@@ -131,6 +146,33 @@ describe("quick read extraction", () => {
     expect(source).toBe("page");
     expect(text).toBe(
       "Título\n\nEste es el primer párrafo del artículo con suficiente texto para contar.\n\nElemento de lista con un párrafo interno bastante largo."
+    );
+  });
+
+  it("keeps words apart at link edges and never reads code on pages without prose", () => {
+    document.body.innerHTML = `
+      <script>var dd = {"cid": "captcha"};</script>
+      <table><tr><td><b><a href="#">Hacker News</a></b><a href="#">new</a> | <a href="#">past</a></td></tr></table>`;
+    expect(g.MdReaderQuickRead.extractPageText(document).text).toBe("Hacker News new | past");
+  });
+
+  it("treats <br> as a word break", () => {
+    document.body.innerHTML = "<article><p>July 2023<br><br>If you collected lists of techniques for doing great work.</p></article>";
+    expect(g.MdReaderQuickRead.extractPageText(document).text).toBe(
+      "July 2023 If you collected lists of techniques for doing great work."
+    );
+  });
+
+  it("skips ads and promos inside the article", () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Primer párrafo real del artículo con texto suficiente para puntuar bien.</p>
+        <div class="ad-slot"><p>Compra ahora este producto increíble con descuento exclusivo.</p></div>
+        <div class="newsletter-box"><p>Suscríbete a nuestra newsletter para recibir novedades.</p></div>
+        <p>Segundo párrafo real del artículo, también con texto suficiente.</p>
+      </article>`;
+    expect(g.MdReaderQuickRead.extractPageText(document).text).toBe(
+      "Primer párrafo real del artículo con texto suficiente para puntuar bien.\n\nSegundo párrafo real del artículo, también con texto suficiente."
     );
   });
 
@@ -174,6 +216,66 @@ describe("quick read extraction", () => {
   });
 });
 
+describe("reader mode", () => {
+  it("rebuilds the article without ads, chrome, styles or unsafe links", () => {
+    document.head.innerHTML = '<meta property="og:site_name" content="Diario"><meta name="author" content="Ana Pérez">';
+    document.body.innerHTML = `
+      <header><nav><a href="/">Portada</a></nav></header>
+      <article>
+        <h1>Gran titular</h1>
+        <p style="color:red" class="lead" onclick="alert(1)">Entrada con <a href="javascript:alert(1)">enlace malo</a> y <a href="/bueno">enlace bueno</a>.</p>
+        <div id="div-gpt-ad-1"><p>Anuncio</p></div>
+        <aside class="related-articles"><p>Te puede interesar</p></aside>
+        <figure><img src="/foto.jpg" alt="Foto" width="800"><figcaption>Pie de foto</figcaption></figure>
+        <img src="/pixel.gif" width="1" alt="">
+        <div class="share-bar"><button>Compartir</button></div>
+        <p>Cuerpo del artículo con varias palabras más.</p>
+      </article>`;
+    const data = g.MdReaderReader.extract(document);
+    expect(data.title).toBe("Gran titular");
+    expect(data.site).toBe("Diario");
+    expect(data.author).toBe("Ana Pérez");
+    const html = data.article.innerHTML;
+    expect(html).not.toMatch(/Anuncio|Te puede interesar|Compartir|Portada|pixel|style=|onclick|class=|javascript:/u);
+    expect(data.article.querySelector("h1")).toBeNull();
+    const links = Array.from(data.article.querySelectorAll("a")) as HTMLAnchorElement[];
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([null, "http://localhost:3000/bueno"]);
+    expect(links[1].rel).toBe("noopener noreferrer");
+    expect(data.article.querySelector("img")?.getAttribute("src")).toBe("http://localhost:3000/foto.jpg");
+    expect(data.article.querySelector("figcaption")?.textContent).toBe("Pie de foto");
+    expect(data.article.textContent).toContain("Cuerpo del artículo");
+  });
+
+  it("cleans site suffixes from titles and unwraps layout tables", () => {
+    document.head.innerHTML = '<title>Cómo leer más rápido | Mi Blog</title><meta property="og:site_name" content="Mi Blog">';
+    document.body.innerHTML = `
+      <table><tr><td><img src="/nav.gif" width="69" height="400" usemap="#nav"><img src="/logo.gif" width="400" height="40" alt="Mi Blog"></td></tr>
+      <tr><td><img src="/t.gif" width="300" height="30" alt="Cómo leer más rápido">
+        <br><br><br><table><tr><td>Un texto largo dentro de una tabla de maquetación que es el cuerpo del ensayo y debe leerse como prosa normal.</td></tr></table>
+      </td></tr></table>
+      <table><thead><tr><th>Método</th><th>ppm</th></tr></thead><tbody><tr><td>RSVP</td><td>500</td></tr></tbody></table>`;
+    const data = g.MdReaderReader.extract(document);
+    expect(data.title).toBe("Cómo leer más rápido");
+    expect(data.article.querySelectorAll("table")).toHaveLength(1);
+    expect(data.article.querySelector("th")?.textContent).toBe("Método");
+    expect(data.article.querySelector("img")).toBeNull();
+    expect(data.article.textContent).toContain("debe leerse como prosa normal");
+    expect(data.article.firstChild?.nodeName).not.toBe("BR");
+  });
+
+  it("does not flag ordinary class names as clutter", () => {
+    const element = document.createElement("div");
+    for (const name of ["header", "thread-list", "download", "badge", "heading", "post-content", "SharedMarkdownContent__JRRdYK", "has-sidebar", "adventure"]) {
+      element.className = name;
+      expect(g.MdReaderCore.isClutter(element)).toBe(false);
+    }
+    for (const name of ["ad", "top-ad", "advertisement", "share-bar", "related-articles", "comments"]) {
+      element.className = name;
+      expect(g.MdReaderCore.isClutter(element)).toBe(true);
+    }
+  });
+});
+
 describe("markdown viewer", () => {
   it("renders sanitized Markdown with marks outside code only", () => {
     const html = g.MdReaderMarkdown.render(
@@ -188,5 +290,12 @@ describe("markdown viewer", () => {
     expect(container.querySelector("code")?.textContent).toBe("a == b == c");
     expect(container.innerHTML).not.toContain("onerror");
     expect(container.querySelector("script")).toBeNull();
+  });
+
+  it("strips forms and styles that could imitate the hosting site", () => {
+    const html = g.MdReaderMarkdown.render(
+      '<form action="https://evil.example"><input name="password"><button>Entrar</button></form><style>body{display:none}</style><p style="position:fixed">x</p>'
+    );
+    expect(html).not.toMatch(/<form|<input|<button|<style|style=/u);
   });
 });

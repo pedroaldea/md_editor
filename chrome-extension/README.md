@@ -4,14 +4,20 @@ Bionic, lectura rápida y lectura de Markdown de Md Editor, en cualquier página
 
 ## Qué hace
 
-- **Bionic** (`⌥⇧B`): resalta el comienzo de cada palabra en la página y se puede deshacer por completo. No modifica código, campos de formulario ni zonas editables. También procesa el contenido que se carga después (scroll infinito, SPAs). Admite cualquier alfabeto.
+- **Bionic** (`⌥⇧B`): resalta el comienzo de cada palabra del texto de la página y se puede deshacer por completo. No toca menús, pestañas, botones, código, campos de formulario, zonas editables ni números. También procesa el contenido que se carga después (scroll infinito, SPAs). Admite cualquier alfabeto.
 - **Lectura rápida** (`⌥⇧R`): muestra una palabra cada vez con su punto de fijación. Si hay texto seleccionado, lee la selección; si no, detecta el texto principal de la página y omite menús, barras laterales y pies.
   - Hace pausas más largas en los puntos, las comas y los cambios de párrafo, y algo más largas en las palabras largas.
   - Teclas: `Espacio` lee o pausa, `←/→` va palabra a palabra, `⇧←/⇧→` va frase a frase, `↑/↓` cambia la velocidad, `[ ]` cambia el tamaño, `Inicio/Fin` y `Esc` cierra.
   - Cuando está en pausa muestra la frase entera para no perder el contexto. Guarda la velocidad y el tamaño.
+- **Modo lectura** (`⌥⇧L`): reconstruye solo el artículo en una capa limpia, sin anuncios, menús, banners de cookies, botones de compartir ni artículos relacionados.
+  - Detecta el título real y quita el sufijo del sitio. También muestra el autor, la fecha y el tiempo de lectura.
+  - Controles: tamaño de letra, ancho de columna, serif/sans, tema, Bionic dentro del artículo y Lectura rápida del artículo.
+  - Las tablas de maquetación de webs antiguas se convierten en texto normal. Los enlaces `javascript:` y los píxeles de seguimiento se descartan.
+- **Temas de lectura**: Auto, Claro, Sepia, Tenue y Oscuro, compartidos por Lectura rápida, Modo lectura, el visor `.md` y el popup.
 - **Visor de Markdown**: abre los archivos `.md` de la web o de `file://` como una página de lectura limpia y saneada con DOMPurify. Incluye los botones Bionic, Lectura rápida y Fuente, y muestra `==resaltado==` y `++subrayado++` igual que la app.
-- **Menú contextual**: "Lectura rápida de la selección", "Lectura rápida de esta página" y "Alternar lectura biónica".
-- **Popup**: ajusta el resalte, el grosor y la longitud mínima de palabra con vista previa en directo, además de la velocidad, el tamaño y el tema (auto, claro u oscuro). También permite activar Bionic siempre en un sitio. Los ajustes se sincronizan con tu cuenta de Chrome.
+- **Menú contextual**: "Lectura rápida de la selección", "Lectura rápida de esta página", "Modo lectura (sin anuncios)" y "Alternar lectura biónica".
+- **Nota sobre anuncios**: Modo lectura los oculta mientras lees. No es un bloqueador de anuncios: la página original sigue cargándolos.
+- **Popup**: ajusta el resalte, el grosor y la longitud mínima de palabra con vista previa en directo, además de la velocidad, el tamaño y el tema (Auto, Claro, Sepia, Tenue u Oscuro). También permite activar Bionic siempre en un sitio. Los ajustes se sincronizan con tu cuenta de Chrome.
 
 ## Instalar (modo desarrollador)
 

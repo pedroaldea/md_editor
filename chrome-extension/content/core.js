@@ -18,7 +18,10 @@
     bionicMinWord: 3,
     bionicWeight: 700,
     bionicDimRest: true,
-    autoBionicSites: []
+    autoBionicSites: [],
+    readerFontSize: 20,
+    readerWidth: 680,
+    readerFont: "serif"
   });
 
   const LIMITS = Object.freeze({
@@ -26,10 +29,68 @@
     fontScale: [60, 200],
     bionicFixation: [0.2, 0.8],
     bionicMinWord: [1, 12],
-    bionicWeight: [500, 900]
+    bionicWeight: [500, 900],
+    readerFontSize: [14, 30],
+    readerWidth: [520, 960]
   });
 
+  /**
+   * Reading palettes shared by every surface (Quick Read, Reader, .md viewer,
+   * popup). "auto" follows the system between light and dark.
+   */
+  const THEMES = Object.freeze({
+    light: { label: "Claro", scheme: "light", bg: "#fbfaf7", fg: "#1d1c1a", muted: "#6b675f", line: "#e3dfd6", panel: "#ffffff", accent: "#d1341f", link: "#1f5fbf", code: "#f1eee7", mark: "#ffe58a" },
+    sepia: { label: "Sepia", scheme: "light", bg: "#f5ecd9", fg: "#3a2e21", muted: "#7b6a54", line: "#e3d5b9", panel: "#fbf5e8", accent: "#b4441f", link: "#8a4b12", code: "#ece0c5", mark: "#f3cf73" },
+    dim: { label: "Tenue", scheme: "dark", bg: "#2a2c30", fg: "#cfccc5", muted: "#93908a", line: "#3c3f44", panel: "#323539", accent: "#e58b72", link: "#94b8ea", code: "#34373c", mark: "#6b5a2a" },
+    dark: { label: "Oscuro", scheme: "dark", bg: "#131312", fg: "#e9e7e1", muted: "#a29e94", line: "#2f2e2b", panel: "#1d1c1a", accent: "#ff5a43", link: "#7fb0ff", code: "#1d1c1a", mark: "#6b5a2a" }
+  });
+  const THEME_NAMES = ["auto", ...Object.keys(THEMES)];
+
+  const themeVars = (theme) =>
+    `color-scheme: ${theme.scheme}; --bg: ${theme.bg}; --fg: ${theme.fg}; --muted: ${theme.muted}; --line: ${theme.line}; --panel: ${theme.panel}; --accent: ${theme.accent}; --link: ${theme.link}; --code: ${theme.code}; --mark: ${theme.mark};`;
+
+  /** CSS that paints `selector[data-theme=…]` with each palette, auto included. */
+  const themeCss = (selector) =>
+    [
+      `${selector} { ${themeVars(THEMES.light)} }`,
+      ...Object.entries(THEMES).map(([name, theme]) => `${selector}[data-theme="${name}"] { ${themeVars(theme)} }`),
+      `@media (prefers-color-scheme: dark) { ${selector}[data-theme="auto"] { ${themeVars(THEMES.dark)} } }`
+    ].join("\n");
+
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+  // Class/id tokens of ads, trackers' widgets, consent walls, share bars,
+  // newsletters, related-content rails and comments. Whole tokens only, so
+  // "thread-list" or "header" never match "ad".
+  // Ad families may carry a prefix ("top-ad", "div-gpt-ad-1"); generic ones
+  // only count as the first word ("share-bar", not "SharedMarkdownContent"
+  // or a layout wrapper such as "has-sidebar").
+  const AD_WORDS = "ads?|adv|advert\\w*|advertis\\w*|dfp|gpt|sponsor\\w*|promo\\w*";
+  const LEAD_WORDS =
+    "newsletter|subscribe|subscription|paywall|social|share|sharing|related|recommended|recommendations|outbrain|taboola|cookies?|consent|gdpr|popup|modal|sidebar|comments?|disqus|breadcrumbs?";
+  const CLUTTER_TOKEN = new RegExp(
+    `^(?:(?:[a-z0-9]+[-_])*(?:${AD_WORDS})|(?:${LEAD_WORDS}))(?:[-_][\\w-]*)?$`,
+    "iu"
+  );
+  const CLUTTER_SELECTOR =
+    "ins.adsbygoogle, [data-ad], [data-ad-slot], [data-ad-unit], [data-google-query-id], [id^='google_ads'], [id^='div-gpt-ad'], [aria-label*='advert' i], [aria-label*='anuncio' i], [aria-label*='publicidad' i]";
+
+  /** True for ads and page clutter that never belongs to the reading text. */
+  const isClutter = (element) => {
+    if (!element || element.nodeType !== 1) return false;
+    if (element.matches(CLUTTER_SELECTOR)) return true;
+    const className = typeof element.className === "string" ? element.className : "";
+    const tokens = `${element.id || ""} ${className}`.split(/\s+/u);
+    return tokens.some((token) => token && CLUTTER_TOKEN.test(token));
+  };
+
+  /** True when `element` or an ancestor below `stop` is clutter. */
+  const inClutter = (element, stop) => {
+    for (let node = element; node && node !== stop && node.nodeType === 1; node = node.parentElement) {
+      if (isClutter(node)) return true;
+    }
+    return false;
+  };
 
   const segmenter =
     typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
@@ -51,7 +112,10 @@
     out.fontScale = Math.round(out.fontScale);
     out.bionicMinWord = Math.round(out.bionicMinWord);
     out.bionicWeight = Math.round(out.bionicWeight / 100) * 100;
-    if (["auto", "light", "dark"].includes(source.theme)) out.theme = source.theme;
+    out.readerFontSize = Math.round(out.readerFontSize);
+    out.readerWidth = Math.round(out.readerWidth / 20) * 20;
+    if (THEME_NAMES.includes(source.theme)) out.theme = source.theme;
+    if (source.readerFont === "serif" || source.readerFont === "sans") out.readerFont = source.readerFont;
     if (typeof source.bionicDimRest === "boolean") out.bionicDimRest = source.bionicDimRest;
     if (Array.isArray(source.autoBionicSites)) {
       out.autoBionicSites = [
@@ -79,7 +143,8 @@
       const word = match[0];
       if (index > cursor) parts.push({ text: text.slice(cursor, index) });
       const units = graphemes(word);
-      if (units.length >= minWord) {
+      // Numbers such as "2023" read as one glyph group; splitting them hurts.
+      if (units.length >= minWord && /\p{L}/u.test(word)) {
         const focusLength = bionicFocusLength(word, fixation);
         parts.push({
           text: word,
@@ -177,9 +242,14 @@
   root.MdReaderCore = Object.freeze({
     DEFAULTS,
     LIMITS,
+    THEMES,
+    THEME_NAMES,
+    themeCss,
     WORD_PATTERN,
     clamp,
     graphemes,
+    isClutter,
+    inClutter,
     normalizeSettings,
     bionicFocusLength,
     bionicParts,
