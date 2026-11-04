@@ -10,3 +10,4 @@ output
 tmp
 src-tauri/target
 src-tauri/gen
+dist-extension

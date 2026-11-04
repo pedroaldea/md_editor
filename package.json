@@ -11,7 +11,9 @@
     "tauri:build": "tauri build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:extension": "playwright test -c playwright.extension.config.ts",
+    "build:extension": "node scripts/package-extension.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

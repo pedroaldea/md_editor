@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Md Reader</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <strong>Md Reader</strong>
+      <span id="site" class="muted"></span>
+    </header>
+
+    <p id="unavailable" class="notice" hidden>
+      Chrome no permite extensiones en esta página. Abre una página web o un archivo .md para usarla.
+    </p>
+
+    <main id="controls">
+      <section class="actions">
+        <button type="button" id="bionic" class="toggle" aria-pressed="false">
+          <span>Bionic</span><kbd>⌥⇧B</kbd>
+        </button>
+        <button type="button" id="quick" class="primary">
+          <span>Lectura rápida</span><kbd>⌥⇧R</kbd>
+        </button>
+      </section>
+
+      <label class="check">
+        <input type="checkbox" id="autoBionic" />
+        <span>Activar Bionic siempre en este sitio</span>
+      </label>
+
+      <p class="sample" id="sample" aria-label="Vista previa">La lectura biónica guía la mirada resaltando el comienzo de cada palabra.</p>
+
+      <section>
+        <h2>Bionic</h2>
+        <label class="row">
+          <span>Resalte</span>
+          <input type="range" id="bionicFixation" min="20" max="80" step="5" />
+          <output for="bionicFixation"></output>
+        </label>
+        <label class="row">
+          <span>Grosor</span>
+          <input type="range" id="bionicWeight" min="500" max="900" step="100" />
+          <output for="bionicWeight"></output>
+        </label>
+        <label class="row">
+          <span>Desde</span>
+          <input type="range" id="bionicMinWord" min="1" max="8" step="1" />
+          <output for="bionicMinWord"></output>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="bionicDimRest" />
+          <span>Atenuar el resto de la palabra</span>
+        </label>
+      </section>
+
+      <section>
+        <h2>Lectura rápida</h2>
+        <label class="row">
+          <span>Velocidad</span>
+          <input type="range" id="wpm" min="100" max="1200" step="20" />
+          <output for="wpm"></output>
+        </label>
+        <label class="row">
+          <span>Tamaño</span>
+          <input type="range" id="fontScale" min="60" max="200" step="10" />
+          <output for="fontScale"></output>
+        </label>
+        <p class="muted small">Selecciona texto antes de abrirla para leer solo ese fragmento. Si no, lee el contenido principal de la página.</p>
+      </section>
+
+      <section>
+        <h2>Tema</h2>
+        <div class="segmented" role="radiogroup" aria-label="Tema">
+          <label><input type="radio" name="theme" value="auto" /><span>Auto</span></label>
+          <label><input type="radio" name="theme" value="light" /><span>Claro</span></label>
+          <label><input type="radio" name="theme" value="dark" /><span>Oscuro</span></label>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <button type="button" id="shortcuts" class="link">Cambiar atajos de teclado</button>
+    </footer>
+
+    <script src="../content/core.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
