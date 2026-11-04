@@ -48,7 +48,7 @@ const BLOCK_SELECTOR =
   "h1, h2, h3, h4, h5, h6, p, pre, blockquote, aside.callout, ul, ol, table, hr";
 const BIONIC_SKIP_SELECTOR = "pre, code, kbd, samp, a, button, input, textarea";
 const MARK_SKIP_SELECTOR = "pre, code, kbd, samp, a, button, input, textarea";
-const BIONIC_WORD_PATTERN = /([A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]*)/gu;
+const BIONIC_WORD_PATTERN = /([\p{L}\p{N}][\p{L}\p{M}\p{N}'’-]*)/gu;
 const FOOTNOTE_DEFINITION_PATTERN = /^\[\^([^\]]+)\]:\s*(.*)$/u;
 const FOOTNOTE_REFERENCE_PATTERN = /\[\^([^\]]+)\]/gu;
 const CHECKLIST_PATTERN = /^\s*(?:[-*+]|\d+\.)\s+\[([ xX])\]\s+/u;

@@ -121,6 +121,13 @@ describe("renderMarkdown", () => {
 
     expect(extractReadingWordsFromHtml(rendered.html)).toEqual(["Before", "After"]);
   });
+
+  it("keeps whole words in every script for Quick Read", () => {
+    const rendered = renderMarkdown("Łódź jest piękna. Çağrı şimdi. Привет мир. Ďakujem čtení.");
+    expect(extractReadingWordsFromHtml(rendered.html)).toEqual([
+      "Łódź", "jest", "piękna", "Çağrı", "şimdi", "Привет", "мир", "Ďakujem", "čtení"
+    ]);
+  });
 });
 
 describe("getBlockIndexForLine", () => {
@@ -173,6 +180,18 @@ describe("applyBionicReading", () => {
 
     expect(transformed).not.toContain("bionic-focus");
     expect(transformed).toContain("const value = 42;");
+  });
+
+  it("emphasizes non-Latin-1 words as a single unit", () => {
+    const transformed = applyBionicReading("<p>piękna Привет</p>", {
+      enabled: true,
+      fixation: 0.5,
+      minWordLength: 4,
+      focusWeight: 760
+    });
+
+    expect(transformed).toContain('<strong class="bionic-focus">pię</strong><span class="bionic-rest">kna</span>');
+    expect(transformed).toContain('<strong class="bionic-focus">При</strong><span class="bionic-rest">вет</span>');
   });
 });
 
