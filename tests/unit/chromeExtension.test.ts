@@ -263,6 +263,32 @@ describe("reader mode", () => {
     expect(data.article.firstChild?.nodeName).not.toBe("BR");
   });
 
+  it("keeps an article whose own class looks like a promo (Substack)", () => {
+    document.head.innerHTML = '<meta property="og:site_name" content="Pep Martorell">';
+    document.body.innerHTML = `
+      <div class="single-post-container"><div class="single-post">
+        <article class="typography newsletter-post post">
+          <h1 class="post-title">¿Y si P = NP?</h1>
+          <div class="post-meta"><div><a href="/autor">Pep Martorell</a></div><div>oct 29, 2026</div></div>
+          <div class="subscribe-widget"><p>Suscríbete para recibir nuevos posts cada semana en tu correo.</p></div>
+          <div class="available-content"><div class="body markup">
+            <p>Primer párrafo del ensayo con suficiente texto para que cuente como prosa principal.</p>
+            <p>Segundo párrafo del ensayo, que también debe aparecer en el modo lectura.</p>
+          </div></div>
+        </article>
+        <div class="post-footer"><p>Pie del post con el número de me gusta y los enlaces para compartir.</p></div>
+      </div></div>`;
+    const data = g.MdReaderReader.extract(document);
+    expect(data.title).toBe("¿Y si P = NP?");
+    expect(data.article.textContent).toContain("Primer párrafo del ensayo");
+    expect(data.article.textContent).toContain("Segundo párrafo del ensayo");
+    expect(data.article.textContent).not.toContain("Suscríbete");
+    expect(data.article.textContent).toContain("Pep Martorell oct 29, 2026");
+    expect(g.MdReaderQuickRead.extractPageText(document).text).toBe(
+      "¿Y si P = NP?\n\nPrimer párrafo del ensayo con suficiente texto para que cuente como prosa principal.\n\nSegundo párrafo del ensayo, que también debe aparecer en el modo lectura."
+    );
+  });
+
   it("does not flag ordinary class names as clutter", () => {
     const element = document.createElement("div");
     for (const name of ["header", "thread-list", "download", "badge", "heading", "post-content", "SharedMarkdownContent__JRRdYK", "has-sidebar", "adventure"]) {

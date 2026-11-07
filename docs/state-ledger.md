@@ -158,3 +158,9 @@ Updated: 2026-08-27
 - New Reader mode (`content/reader.js`, `⌥⇧L`): allow-list rebuild into Shadow DOM, ad/clutter token detector, layout-table unwrapping, badge/logo/image-map/tracking-pixel removal, safe absolute links, title from the article headline, size/width/font/theme controls, in-article Bionic and Quick Read hand-off with Esc ordering.
 - Shared palettes Auto/Claro/Sepia/Tenue/Oscuro in `core.js`, used by Quick Read, Reader, `.md` viewer and popup.
 - Proof: 143/143 unit tests across 20 files; 7/7 real-Chromium extension E2E including Reader mode; production build passes. Reader mode is not an ad blocker: pages still download their ads.
+
+## 2026-11-07 — Md Reader 1.1.1: Reader mode on Substack
+
+- Reported by Pedro: Reader mode empty on a Substack post while Bionic worked. Root cause: Substack sets `class="newsletter-post"` on the post `<article>`, the clutter filter matched `newsletter…` and discarded the whole article; Quick Read only looked fine because it fell back to reading the whole page.
+- Fix: `article`, `main`, `[role='main']` and `[itemprop='articleBody']` are never clutter. Unwrapped boxes now keep a space between neighbours (author + date, embedded tweet cards), and the reader no longer shows a focus outline.
+- Proof: a Substack-shaped unit regression fails on 1.1.0 (footer text instead of the article; `Pep Martorelloct`) and passes now; 144/144 unit tests, 7/7 extension E2E; live check on the reported post (6,176 chars, title `¿Y si P = NP?`, Quick Read 973 words) and on Wikipedia, MDN, GitHub, paulgraham.com and BBC Mundo with unchanged results.

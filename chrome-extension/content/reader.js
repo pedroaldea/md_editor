@@ -81,6 +81,16 @@
     return headingText;
   };
 
+  const BOX_TAGS = new Set(["DIV", "SECTION", "HEADER", "ADDRESS", "DETAILS", "CENTER"]);
+
+  /** Adds one space when `target` ends in a word, so the next text stays apart. */
+  const separate = (target, doc) => {
+    const last = target.lastChild;
+    if (last && last.nodeType === Node.TEXT_NODE ? /\S$/u.test(last.nodeValue) : last && /\S$/u.test(last.textContent || "")) {
+      target.append(doc.createTextNode(" "));
+    }
+  };
+
   const hiddenByStyle = (element) => {
     const style = root.getComputedStyle?.(element);
     return Boolean(style && (style.display === "none" || style.visibility === "hidden"));
@@ -110,7 +120,12 @@
         continue;
       }
       if (!KEEP.has(tag)) {
+        // Unwrapped boxes (often flex rows: author + date, tweet cards) must not
+        // glue their words to the neighbours once the layout is gone.
+        const box = BOX_TAGS.has(tag);
+        if (box) separate(target, doc);
         rebuild(node, target, doc, context);
+        if (box) separate(target, doc);
         continue;
       }
       if (tag === "H1" && node.textContent.trim() === context.title) continue;
@@ -199,6 +214,7 @@
       animation: mdr-in .16s ease-out;
     }
     ${core.themeCss(".reader")}
+    .reader:focus { outline: none; }
     @keyframes mdr-in { from { opacity: 0; } }
     @media (prefers-reduced-motion: reduce) { .reader { animation: none; } }
     .bar {

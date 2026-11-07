@@ -76,8 +76,13 @@
     "ins.adsbygoogle, [data-ad], [data-ad-slot], [data-ad-unit], [data-google-query-id], [id^='google_ads'], [id^='div-gpt-ad'], [aria-label*='advert' i], [aria-label*='anuncio' i], [aria-label*='publicidad' i]";
 
   /** True for ads and page clutter that never belongs to the reading text. */
+  // Content containers are never clutter, whatever their classes say:
+  // Substack marks every post <article class="newsletter-post">.
+  const CONTENT_CONTAINER = "article, main, [role='main'], [itemprop='articleBody']";
+
   const isClutter = (element) => {
     if (!element || element.nodeType !== 1) return false;
+    if (element.matches(CONTENT_CONTAINER)) return false;
     if (element.matches(CLUTTER_SELECTOR)) return true;
     const className = typeof element.className === "string" ? element.className : "";
     const tokens = `${element.id || ""} ${className}`.split(/\s+/u);

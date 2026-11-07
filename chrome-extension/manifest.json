@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Md Reader — Bionic y lectura rápida",
   "short_name": "Md Reader",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Lectura biónica, lectura rápida, modo lectura sin anuncios y visor de Markdown en cualquier página, como en Md Editor.",
   "minimum_chrome_version": "120",
   "icons": {
